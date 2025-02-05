@@ -1877,3 +1877,29 @@ document.getElementById("apply-filters").addEventListener("click", applyFilters)
 
 // Event listener for Reset Filters button
 document.getElementById("reset-filters").addEventListener("click", resetFilters);
+
+document.querySelectorAll('.dropdown').forEach(dropdown => {
+    dropdown.addEventListener('click', function(event) {
+        const content = this.querySelector('.dropdown-content');
+        content.classList.toggle('open');
+        
+        // Prevent scrolling of the body when the dropdown is open
+        if (content.classList.contains('open')) {
+            document.body.classList.add('no-scroll');
+        } else {
+            document.body.classList.remove('no-scroll');
+        }
+        
+        // Prevent the dropdown click from propagating and causing body scroll
+        event.stopPropagation();
+    });
+});
+
+// Close dropdown when clicking outside
+document.addEventListener('click', function(event) {
+    const openDropdown = document.querySelector('.dropdown-content.open');
+    if (openDropdown && !openDropdown.contains(event.target)) {
+        openDropdown.classList.remove('open');
+        document.body.classList.remove('no-scroll');
+    }
+});

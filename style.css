@@ -147,6 +147,7 @@ main {
     gap: 0.5rem;
     justify-content: center;
     align-items: center;
+    flex-wrap: wrap; /* Allows items to wrap onto the next line */
 }
 
 #filters label {
@@ -249,6 +250,10 @@ button:hover, .dropdown-button:hover {
     align-items: center;
     border-radius: 8px;
     margin-bottom: 8px;
+}
+
+body.no-scroll {
+    overflow: hidden; /* Prevent scrolling on the main page */
 }
 
 .dropdown:hover .dropdown-content {
