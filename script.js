@@ -112,7 +112,7 @@ async function fetchListeningHistory(username) {
 	const baseUrl = `https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=${username}&api_key=${API_KEY}&format=json&extended=1&limit=200&autocorrect=0`;
 
 	// Get the timezone offset (in hours) in UTC
-	const timezoneOffset = new Date().getTimezoneOffset() / 60; // in hours
+    const timezoneOffset = new Date().getTimezoneOffset() * 60000; // in milliseconds
 
 	// First request to get total pages
 	const firstResponse = await fetch(baseUrl);
@@ -137,7 +137,7 @@ async function fetchListeningHistory(username) {
 
 		// Adjust the date based on the timezone offset
 		if (timestamp) {
-			adjustedDate = (timestamp * 1000 + timezoneOffset * 3600000).toString(); // Adjust by hours (3600 seconds per hour)
+            adjustedDate = (timestamp * 1000 - timezoneOffset).toString();
 		}
 
 		return {
@@ -167,7 +167,7 @@ async function fetchListeningHistory(username) {
 
 				// Adjust the date based on the timezone offset
 				if (timestamp) {
-					adjustedDate = (timestamp * 1000 + timezoneOffset * 3600000).toString(); // Adjust by hours (3600 seconds per hour)
+                    adjustedDate = (timestamp * 1000 - timezoneOffset).toString();
 				}
 
 				return {
@@ -190,7 +190,7 @@ async function fetchListeningHistory(username) {
 
 async function fetchRecentTracksSince(username, latestTimestamp) {
     const baseUrl = `https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=${username}&api_key=${API_KEY}&format=json&extended=1&limit=200&autocorrect=0`;
-    const timezoneOffset = new Date().getTimezoneOffset() / 60; // in hours
+    const timezoneOffset = new Date().getTimezoneOffset() * 60000; // in milliseconds
     let newTracks = [];
     let page = 1;
     let totalPages = 1;
@@ -216,9 +216,9 @@ async function fetchRecentTracksSince(username, latestTimestamp) {
         if (!track.date || !track.date.uts) continue;
   
         // Convert Last.fm's uts (seconds) to a JavaScript timestamp (ms)
-        const ts = parseInt(track.date.uts, 10);
-        // Adjust by timezone offset (3600000 ms per hour)
-        const adjustedTimestamp = ts * 1000 + timezoneOffset * 3600000;
+        const ts = parseInt(track.date.uts, 10) * 1000;
+        // Adjust by timezone offset (milliseconds)
+        adjustedTimestamp = (ts - new Date().getTimezoneOffset() * 60000).toString();
   
         // If the track is newer than latestTimestamp, include it.
         if (adjustedTimestamp > latestTimestamp) {
@@ -1059,6 +1059,8 @@ function calculateSeparateScrobbles(tracks, period, entityType = 'track') {
  * @returns {Array} - Array of grouped objects with consecutive scrobble counts and timestamps.
  */
 function calculateConsecutiveScrobbles(tracks, entityType = 'track') {
+
+    tracks.sort((a, b) => parseInt(a.Date) - parseInt(b.Date));
     // Define grouping key based on entityType.
     const groupKeyFunc = (track) => {
         if (entityType === 'track') {
@@ -1110,138 +1112,129 @@ function calculateConsecutiveScrobbles(tracks, entityType = 'track') {
     return Object.values(groups);
 }
 
-
-/**
- * Calculate the maximum consecutive periods (day/week/month) for an entity.
- * @param {Array} tracks - Array of track objects.
- * @param {string} period - The period to calculate ('day', 'week', 'month').
- * @param {string} [entityType='track'] - Grouping level: 'track', 'album', or 'artist'.
- * @returns {Array} - Array of grouped objects with maximum consecutive period count and timestamps.
- */
 function calculateConsecutivePeriods(tracks, period, entityType = 'track') {
-    // Sort tracks by Date (assuming Date is in ms as string)
-    tracks.sort((a, b) => parseInt(a.Date) - parseInt(b.Date));
+	// Sort tracks by Date (assuming Date is in ms as string)
+	tracks.sort((a, b) => parseInt(a.Date) - parseInt(b.Date));
 
-    const groupKeyFunc = (track) => {
-        if (entityType === 'track') {
-            return `${track.Artist} - ${track.Track}`;
-        } else if (entityType === 'album') {
-            return `${track.Album}||${track.Artist}`;
-        } else if (entityType === 'artist') {
-            return track.Artist;
-        } else {
-            return `${track.Artist} - ${track.Track}`;
-        }
-    };
+	const groupKeyFunc = (track) => {
+		if (entityType === 'track') {
+			return `${track.Artist} - ${track.Track}`;
+		} else if (entityType === 'album') {
+			return `${track.Album}||${track.Artist}`;
+		} else if (entityType === 'artist') {
+			return track.Artist;
+		} else {
+			return `${track.Artist} - ${track.Track}`;
+		}
+	};
 
-    const results = {};
-    const processed = new Set();
+	const results = {};
+	const processed = new Set();
 
-    for (let i = 0; i < tracks.length; i++) {
-        const key = groupKeyFunc(tracks[i]);
-        if (processed.has(key)) continue;
-        processed.add(key);
-        const groupTracks = tracks.filter(t => groupKeyFunc(t) === key);
-        const periodsSet = new Set();
+	for (let i = 0; i < tracks.length; i++) {
+		const key = groupKeyFunc(tracks[i]);
+		if (processed.has(key)) continue;
+		processed.add(key);
+		const groupTracks = tracks.filter((t) => groupKeyFunc(t) === key);
+		const periodsSet = new Set();
 
-        groupTracks.forEach(track => {
-            const timestamp = parseInt(track.Date);
-            if (isNaN(timestamp)) return;
-            const date = new Date(timestamp);
-            let periodKey;
-            switch (period) {
-                case 'day':
-                    periodKey = Math.floor(timestamp / 86400000);
-                    break;
-                case 'week':
-                    periodKey = getWeekIdentifier(date);
-                    break;
-                case 'month':
-                    periodKey = date.getFullYear() * 12 + date.getMonth();
-                    break;
-                default:
-                    periodKey = Math.floor(timestamp / 86400000);
-            }
-            periodsSet.add(periodKey);
-        });
+		groupTracks.forEach((track) => {
+			const timestamp = parseInt(track.Date);
+			if (isNaN(timestamp)) return;
+			const date = new Date(timestamp);
+			let periodKey;
+			switch (period) {
+				case 'day':
+					periodKey = Math.floor(timestamp / 86400000);
+					break;
+				case 'week':
+					periodKey = getWeekIdentifier(date);
+					break;
+				case 'month':
+					periodKey = date.getFullYear() * 12 + date.getMonth();
+					break;
+				default:
+					periodKey = Math.floor(timestamp / 86400000);
+			}
+			periodsSet.add(periodKey);
+		});
 
-        const sortedPeriods = Array.from(periodsSet).sort((a, b) => a - b);
-        let maxConsecutive = 0, currentConsecutive = 0, lastPeriod = null, startTime = null, endTime = null;
-        sortedPeriods.forEach(currentPeriod => {
-            if (lastPeriod !== null && isNextPeriod(lastPeriod, currentPeriod, period)) {
-                currentConsecutive++;
-                const matchingTrack = groupTracks.find(t => {
-                    const ts = parseInt(t.Date);
-                    const d = new Date(ts);
-                    let pKey;
-                    switch (period) {
-                        case 'day':
-                            pKey = Math.floor(ts / 86400000);
-                            break;
-                        case 'week':
-                            pKey = getWeekIdentifier(d);
-                            break;
-                        case 'month':
-                            pKey = d.getFullYear() * 12 + d.getMonth();
-                            break;
-                    }
-                    return pKey === currentPeriod;
-                });
-                endTime = matchingTrack ? matchingTrack.Date : null;
-            } else {
-                if (currentConsecutive > maxConsecutive) {
-                    maxConsecutive = currentConsecutive;
-                    results[key] = {
-                        maxConsecutive,
-                        startTime,
-                        endTime
-                    };
-                }
-                currentConsecutive = 1;
-                const matchingTrack = groupTracks.find(t => {
-                    const ts = parseInt(t.Date);
-                    const d = new Date(ts);
-                    let pKey;
-                    switch (period) {
-                        case 'day':
-                            pKey = Math.floor(ts / 86400000);
-                            break;
-                        case 'week':
-                            pKey = getWeekIdentifier(d);
-                            break;
-                        case 'month':
-                            pKey = d.getFullYear() * 12 + d.getMonth();
-                            break;
-                    }
-                    return pKey === currentPeriod;
-                });
-                startTime = matchingTrack ? matchingTrack.Date : null;
-                endTime = startTime;
-            }
-            lastPeriod = currentPeriod;
-        });
-        if (currentConsecutive > maxConsecutive) {
-            maxConsecutive = currentConsecutive;
-            results[key] = {
-                maxConsecutive,
-                startTime,
-                endTime
-            };
-        }
-        // Add group info based on entityType.
-        const sample = groupTracks[0];
-        if (entityType === 'track') {
-            results[key].Artist = sample.Artist;
-            results[key].Track = sample.Track;
-        } else if (entityType === 'album') {
-            results[key].name = sample.Album;
-            results[key].artist = sample.Artist;
-        } else if (entityType === 'artist') {
-            results[key].name = sample.Artist;
-        }
-    }
-    return Object.values(results);
+		const sortedPeriods = Array.from(periodsSet).sort((a, b) => a - b);
+		let maxConsecutive = 1,
+			currentConsecutive = 1,
+			lastPeriod = null,
+			startTime = null,
+			endTime = null,
+			bestStartTime = null,
+			bestEndTime = null;
+
+		sortedPeriods.forEach((currentPeriod, index) => {
+			if (lastPeriod !== null && isNextPeriod(lastPeriod, currentPeriod, period)) {
+				currentConsecutive++;
+				endTime = getMatchingTrackTime(groupTracks, currentPeriod, period);
+			} else {
+				if (currentConsecutive > maxConsecutive) {
+					maxConsecutive = currentConsecutive;
+					bestStartTime = startTime;
+					bestEndTime = endTime;
+				}
+				currentConsecutive = 1;
+				startTime = getMatchingTrackTime(groupTracks, currentPeriod, period);
+				endTime = startTime;
+			}
+			lastPeriod = currentPeriod;
+		});
+
+		// Final streak check
+		if (currentConsecutive > maxConsecutive) {
+			maxConsecutive = currentConsecutive;
+			bestStartTime = startTime;
+			bestEndTime = endTime;
+		}
+
+		results[key] = {
+			maxConsecutive,
+			startTime: bestStartTime,
+			endTime: bestEndTime,
+		};
+
+		// Add group info based on entityType.
+		const sample = groupTracks[0];
+		if (entityType === 'track') {
+			results[key].Artist = sample.Artist;
+			results[key].Track = sample.Track;
+		} else if (entityType === 'album') {
+			results[key].name = sample.Album;
+			results[key].artist = sample.Artist;
+		} else if (entityType === 'artist') {
+			results[key].name = sample.Artist;
+		}
+	}
+	return Object.values(results);
 }
+
+// Helper function to find a matching track's timestamp
+function getMatchingTrackTime(groupTracks, periodKey, period) {
+	const matchingTrack = groupTracks.find((t) => {
+		const ts = parseInt(t.Date);
+		const d = new Date(ts);
+		let pKey;
+		switch (period) {
+			case 'day':
+				pKey = Math.floor(ts / 86400000);
+				break;
+			case 'week':
+				pKey = getWeekIdentifier(d);
+				break;
+			case 'month':
+				pKey = d.getFullYear() * 12 + d.getMonth();
+				break;
+		}
+		return pKey === periodKey;
+	});
+	return matchingTrack ? matchingTrack.Date : null;
+}
+
 
 // Convert a date to a unique week identifier
 function getWeekIdentifier(date) {
@@ -1275,24 +1268,8 @@ function displayTopTracks(tracks) {
         const trackDiv = document.createElement("div");
         trackDiv.classList.add("track");
         let additionalInfo = '';
-
-        if (sortingBasis === 'separate-days') {
-            additionalInfo = `Different days: ${track.count}`;
-        } else if (sortingBasis === 'separate-weeks') {
-            additionalInfo = `Different weeks: ${track.count}`;
-        } else if (sortingBasis === 'separate-months') {
-            additionalInfo = `Different months: ${track.count}`;
-        } else if (sortingBasis === 'consecutive-scrobbles') {
-            additionalInfo = `Max consecutive scrobbles: ${track.maxConsecutive}<br>Start: ${new Date(parseInt(track.startTime)).toLocaleString()}<br>End: ${new Date(parseInt(track.endTime)).toLocaleString()}`;
-        } else if (sortingBasis === 'consecutive-days') {
-            additionalInfo = `Max consecutive days: ${track.maxConsecutive}<br>Start: ${new Date(parseInt(track.startTime)).toLocaleString()}<br>End: ${new Date(parseInt(track.endTime)).toLocaleString()}`;
-        } else if (sortingBasis === 'consecutive-weeks') {
-            additionalInfo = `Max consecutive weeks: ${track.maxConsecutive}<br>Start: ${new Date(parseInt(track.startTime)).toLocaleString()}<br>End: ${new Date(parseInt(track.endTime)).toLocaleString()}`;
-        } else if (sortingBasis === 'consecutive-months') {
-            additionalInfo = `Max consecutive months: ${track.maxConsecutive}<br>Start: ${new Date(parseInt(track.startTime)).toLocaleString()}<br>End: ${new Date(parseInt(track.endTime)).toLocaleString()}`;
-        } else {
-            additionalInfo = `Scrobbles: ${track.count}`;
-        }
+        additionalInfo = getAdditionalInfo(sortingBasis, track);
+        
 
         // If the track appears on multiple albums, display the album with the highest scrobble count.
         let albumDisplay = '';
@@ -1340,23 +1317,7 @@ function displayTopAlbums(albums) {
         albumDiv.classList.add("album");
         let additionalInfo = '';
 
-        if (sortingBasis === 'separate-days') {
-            additionalInfo = `Different days: ${album.count}`;
-        } else if (sortingBasis === 'separate-weeks') {
-            additionalInfo = `Different weeks: ${album.count}`;
-        } else if (sortingBasis === 'separate-months') {
-            additionalInfo = `Different months: ${album.count}`;
-        } else if (sortingBasis === 'consecutive-scrobbles') {
-            additionalInfo = `Max consecutive scrobbles: ${album.maxConsecutive}<br>Start: ${new Date(parseInt(album.startTime)).toLocaleString()}<br>End: ${new Date(parseInt(album.endTime)).toLocaleString()}`;
-        } else if (sortingBasis === 'consecutive-days') {
-            additionalInfo = `Max consecutive days: ${album.maxConsecutive}<br>Start: ${new Date(parseInt(album.startTime)).toLocaleString()}<br>End: ${new Date(parseInt(album.endTime)).toLocaleString()}`;
-        } else if (sortingBasis === 'consecutive-weeks') {
-            additionalInfo = `Max consecutive weeks: ${album.maxConsecutive}<br>Start: ${new Date(parseInt(album.startTime)).toLocaleString()}<br>End: ${new Date(parseInt(album.endTime)).toLocaleString()}`;
-        } else if (sortingBasis === 'consecutive-months') {
-            additionalInfo = `Max consecutive months: ${album.maxConsecutive}<br>Start: ${new Date(parseInt(album.startTime)).toLocaleString()}<br>End: ${new Date(parseInt(album.endTime)).toLocaleString()}`;
-        } else {
-            additionalInfo = `Scrobbles: ${album.count}`;
-        }
+        additionalInfo = getAdditionalInfo(sortingBasis, album);
 
         let unfilteredInfo = '';
         if (showUnfiltered) {
@@ -1390,23 +1351,7 @@ function displayTopArtists(artists) {
         artistDiv.classList.add("artist");
         let additionalInfo = '';
 
-        if (sortingBasis === 'separate-days') {
-            additionalInfo = `Different days: ${artist.count}`;
-        } else if (sortingBasis === 'separate-weeks') {
-            additionalInfo = `Different weeks: ${artist.count}`;
-        } else if (sortingBasis === 'separate-months') {
-            additionalInfo = `Different months: ${artist.count}`;
-        } else if (sortingBasis === 'consecutive-scrobbles') {
-            additionalInfo = `Max consecutive scrobbles: ${artist.maxConsecutive}<br>Start: ${new Date(parseInt(artist.startTime)).toLocaleString()}<br>End: ${new Date(parseInt(artist.endTime)).toLocaleString()}`;
-        } else if (sortingBasis === 'consecutive-days') {
-            additionalInfo = `Max consecutive days: ${artist.maxConsecutive}<br>Start: ${new Date(parseInt(artist.startTime)).toLocaleString()}<br>End: ${new Date(parseInt(artist.endTime)).toLocaleString()}`;
-        } else if (sortingBasis === 'consecutive-weeks') {
-            additionalInfo = `Max consecutive weeks: ${artist.maxConsecutive}<br>Start: ${new Date(parseInt(artist.startTime)).toLocaleString()}<br>End: ${new Date(parseInt(artist.endTime)).toLocaleString()}`;
-        } else if (sortingBasis === 'consecutive-months') {
-            additionalInfo = `Max consecutive months: ${artist.maxConsecutive}<br>Start: ${new Date(parseInt(artist.startTime)).toLocaleString()}<br>End: ${new Date(parseInt(artist.endTime)).toLocaleString()}`;
-        } else {
-            additionalInfo = `Scrobbles: ${artist.count}`;
-        }
+        additionalInfo = getAdditionalInfo(sortingBasis, artist);
 
         let unfilteredInfo = '';
         if (showUnfiltered) {
@@ -1422,6 +1367,24 @@ function displayTopArtists(artists) {
         `;
         resultsDiv.appendChild(artistDiv);
     });
+}
+
+
+function getAdditionalInfo(sortingBasis, entity) {
+	if (sortingBasis === 'separate-days') {
+		return `Different days: ${entity.count}`;
+	} else if (sortingBasis === 'separate-weeks') {
+		return `Different weeks: ${entity.count}`;
+	} else if (sortingBasis === 'separate-months') {
+		return `Different months: ${entity.count}`;
+	} else if (sortingBasis.startsWith('consecutive-')) {
+		const startDate = entity.startTime ? new Date(parseInt(entity.startTime)).toISOString().split('T')[0] : 'N/A';
+		const endDate = entity.endTime ? new Date(parseInt(entity.endTime)).toISOString().split('T')[0] : 'N/A';
+		let periodLabel = sortingBasis.replace('consecutive-', '').replace('-', ' ');
+		return `Max consecutive ${periodLabel}: ${entity.maxConsecutive}<br>Start: ${startDate}<br>End: ${endDate}`;
+	} else {
+		return `Scrobbles: ${entity.count}`;
+	}
 }
 
 function getWeekNumber(date) {
