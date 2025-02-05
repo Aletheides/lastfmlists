@@ -112,7 +112,7 @@ async function fetchListeningHistory(username) {
 	const baseUrl = `https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=${username}&api_key=${API_KEY}&format=json&extended=1&limit=200&autocorrect=0`;
 
 	// Get the timezone offset (in hours) in UTC
-	const timezoneOffset = new Date().getTimezoneOffset() / 60; // in hours
+	const timezoneOffset = -new Date().getTimezoneOffset() / 60; // in hours
 
 	// First request to get total pages
 	const firstResponse = await fetch(baseUrl);
