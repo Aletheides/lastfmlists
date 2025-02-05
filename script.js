@@ -697,7 +697,7 @@ document.getElementById("load-detailed-data").addEventListener("click", async ()
 	// For Artists: choose those with >100 scrobbles or the top 250 (whichever is more)
 	let selectedArtists = topArtists.filter(artist => artist.playcount > 100);
 	if (selectedArtists.length < 250) {
-		selectedArtists = topArtists.slice(0, 10);
+		selectedArtists = topArtists.slice(0, 250);
 	}
 	const fetchedArtists = await fetchAllArtistDetails(selectedArtists, 250);
 	console.log("Fetched artist details:", fetchedArtists);
@@ -705,7 +705,7 @@ document.getElementById("load-detailed-data").addEventListener("click", async ()
 	// For Albums: choose those with >10 scrobbles or the top 500 (whichever is more)
 	let selectedAlbums = topAlbums.filter(album => album.playcount > 10);
 	if (selectedAlbums.length < 500) {
-		selectedAlbums = topAlbums.slice(0, 10);
+		selectedAlbums = topAlbums.slice(0, 500);
 	}
 	const fetchedAlbums = await fetchAllAlbumDetails(selectedAlbums, 250);
 	console.log("Fetched album details:", fetchedAlbums);
@@ -713,7 +713,7 @@ document.getElementById("load-detailed-data").addEventListener("click", async ()
 	// For Tracks: choose those with >5 scrobbles or the top 1000 (whichever is more)
 	let selectedTracks = topTracks.filter(track => track.playcount > 5);
 	if (selectedTracks.length < 1000) {
-		selectedTracks = topTracks.slice(0, 10);
+		selectedTracks = topTracks.slice(0, 1000);
 	}
 	const fetchedTracks = await fetchAllTrackDetails(selectedTracks, 250);
 	console.log("Fetched track details:", fetchedTracks);
