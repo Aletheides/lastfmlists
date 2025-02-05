@@ -144,10 +144,10 @@ main {
 
 #filters {
     display: flex;
-    gap: 0.5rem;
-    justify-content: center;
+    flex-wrap: wrap; /* Allow dropdowns to wrap onto the next line */
+    gap: 0.5rem; /* Add space between the dropdowns */
+    justify-content: center; /* Align items in the center */
     align-items: center;
-    flex-wrap: wrap; /* Allows items to wrap onto the next line */
 }
 
 #filters label {
@@ -214,9 +214,9 @@ main {
 
 .dropdown {
     position: relative;
-    display: inline-block;
+    display: flex;
     margin: 0.5rem;
-    width: 100%;
+    width: auto;
     font-family: 'Roboto Flex', sans-serif;
     align-items: center;
 }
@@ -228,7 +228,7 @@ button, .dropdown-button {
     padding: 10px 20px;
     border-radius: 8px;
     cursor: pointer;
-    width: 100%;
+    width: auto; /* Allow the button to only take as much space as needed */
     font-family: 'Roboto Flex', sans-serif;
 }
 
@@ -286,8 +286,10 @@ body.no-scroll {
 
 .filters {
     display: flex;
-    justify-content: space-between;
-    gap: 0.1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-start;
+    align-items: center;
     width: 100%;
 }
 
@@ -355,3 +357,4 @@ footer .social-icons a svg {
 footer .social-icons a:hover svg {
     fill: var(--primary-accent-color);
 }
+
