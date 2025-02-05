@@ -1840,7 +1840,7 @@ function updateActiveFilters() {
         { id: "artist-first-scrobble-years", label: "Artist first scrobble years" },
         { id: "album-first-scrobble-years", label: "Album first scrobble years" },
         { id: "track-first-scrobble-years", label: "Track first scrobble years" },
-        { id: "artist-genre-country", label: "Artist genre/country" }
+        { id: "artist-genre-country", label: "Artist tags" }
     ];
 
     filters.forEach(filter => {
@@ -1903,3 +1903,4 @@ document.addEventListener('click', function(event) {
         document.body.classList.remove('no-scroll');
     }
 });
+

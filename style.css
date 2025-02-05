@@ -27,6 +27,13 @@ body {
     color: var(--primary-text-color);
 }
 
+/* Prevent horizontal scrolling on mobile */
+body, html {
+    overflow-x: hidden; /* Disable horizontal scrolling */
+    width: 100%; /* Ensure body width is constrained */
+    margin: 0; /* Remove default margin */
+}
+
 /* Header Styling */
 header {
     text-align: center;
@@ -239,18 +246,22 @@ button:hover, .dropdown-button:hover {
 .dropdown-content {
     display: none;
     position: absolute;
+    top: 100%; /* Position it directly below the button */
+    left: 50%; /* Position the left edge at the center of the button */
+    transform: translateX(-50%); /* Shift it back by half of its width to center it */
     max-height: 300px;
     overflow-y: auto;
-    background-color: var(--sidebar-color); /* Changed background color */
+    background-color: var(--sidebar-color);
     box-shadow: 0px 4px 6px rgba(0,0,0,0.1);
     padding: 8px;
     z-index: 1;
     min-width: 200px;
-    max-width: 300px;
+    max-width: 200px;
     align-items: center;
     border-radius: 8px;
     margin-bottom: 8px;
 }
+
 
 body.no-scroll {
     overflow: hidden; /* Prevent scrolling on the main page */
@@ -288,7 +299,7 @@ body.no-scroll {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
-    justify-content: flex-start;
+    justify-content: space-evenly;
     align-items: center;
     width: 100%;
 }
@@ -358,3 +369,9 @@ footer .social-icons a:hover svg {
     fill: var(--primary-accent-color);
 }
 
+@media (max-width: 768px) {
+    .dropdown-content {
+        min-width: 150px; /* Limit the width of dropdowns */
+        max-width: 150px; /* Limit the width of dropdowns */
+    }
+}
