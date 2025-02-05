@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>lastfmlists</title>
+    <link rel="icon" type="image/png" href="logo_sq.PNG" sizes="32x32">
+    <link rel="icon" type="image/png" href="logo_sq.PNG" sizes="16x16">
+    <link rel="apple-touch-icon" href="logo_sq.PNG" sizes="180x180">
+	<link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+	<header>
+		<h1>lastfmlists.com</h1>
+		<p>Create various lists using your last.fm data!</p>
+	</header>
+	<main>
+
+		<section id="input-section">
+
+			<form id="username-form">
+				<input type="text" id="username" placeholder="Enter your Last.fm username" required>
+				<button type="submit">Load Data</button>
+                <button type="button" id="load-detailed-data" disabled title="Load your regular data and save it to your browser to unlock loading detailed data!">
+                    Load Details
+                  </button>
+                <button type="button" id="save-data">Save Data</button>
+                <button type="button" id="theme-toggle"><i class="fas fa-moon"></i></button>
+			</form>
+
+            <input type="file" id="csv-file" placeholder="Upload a csv file" accept=".csv">
+            <label for="timezone">Timezone:</label>
+            <select id="timezone">
+                <option value="-12">UTC-12:00 (Baker Island)</option>
+                <option value="-11">UTC-11:00 (American Samoa)</option>
+                <option value="-10">UTC-10:00 (Hawaii)</option>
+                <option value="-9">UTC-09:00 (Alaska)</option>
+                <option value="-8">UTC-08:00 (Los Angeles, Vancouver)</option>
+                <option value="-7">UTC-07:00 (Phoenix, Denver)</option>
+                <option value="-6">UTC-06:00 (Chicago, Mexico City)</option>
+                <option value="-5">UTC-05:00 (New York, Toronto)</option>
+                <option value="-4">UTC-04:00 (Santiago, Halifax)</option>
+                <option value="-3">UTC-03:00 (São Paulo, Buenos Aires)</option>
+                <option value="-2">UTC-02:00 (South Georgia)</option>
+                <option value="-1">UTC-01:00 (Cape Verde)</option>
+                <option value="0">UTC+00:00 (London, Dublin)</option>
+                <option value="1">UTC+01:00 (Paris, Berlin)</option>
+                <option value="2">UTC+02:00 (Cairo, Helsinki)</option>
+                <option value="3">UTC+03:00 (Moscow, Istanbul)</option>
+                <option value="4">UTC+04:00 (Dubai, Baku)</option>
+                <option value="5">UTC+05:00 (Karachi, Tashkent)</option>
+                <option value="6">UTC+06:00 (Dhaka, Almaty)</option>
+                <option value="7">UTC+07:00 (Bangkok, Jakarta)</option>
+                <option value="8">UTC+08:00 (Singapore, Beijing)</option>
+                <option value="9">UTC+09:00 (Tokyo, Seoul)</option>
+                <option value="10">UTC+10:00 (Sydney, Melbourne)</option>
+                <option value="11">UTC+11:00 (Solomon Islands)</option>
+                <option value="12">UTC+12:00 (Auckland, Fiji)</option>
+                <option value="13">UTC+13:00 (Samoa, Tonga)</option>
+                <option value="14">UTC+14:00 (Line Islands)</option>
+            </select>
+
+              <!-- This div will show loading messages for detailed stats -->
+            <div id="loading-stats" style="font-style: italic; color: #888;"></div>
+		</section>
+
+        <section id="filters-section">
+            <h3>Filters:</h3>
+            <!-- List Length -->
+            <label for="list-length">List Length:</label>
+            <input type="number" id="list-length" placeholder="e.g., 10" min="1">
+            <!-- Unfiltered stats in parentheses checkbox -->
+            <label for="unfiltered-stats" class="inline-checkbox">
+                Show unfiltered stats in parentheses:
+                <input type="checkbox" id="unfiltered-stats">
+            </label>
+            <div class="filters">
+                <!-- Sorting Basis -->
+                <div class="dropdown">
+                    <button class="dropdown-button">Sorting Basis</button>
+                    <div class="dropdown-content">
+                        <select id="sorting-basis">
+                            <option value="scrobbles">Number of scrobbles</option>
+                            <option value="separate-days">Scrobbled on different days</option>
+                            <option value="separate-weeks">Scrobbled on different weeks</option>
+                            <option value="separate-months">Scrobbled on different months</option>
+                            <option value="consecutive-scrobbles">Max consecutive scrobbles</option>
+                            <option value="consecutive-days">Max consecutive days</option>
+                            <option value="consecutive-weeks">Max consecutive weeks</option>
+                            <option value="consecutive-months">Max consecutive months</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- Entity Type -->
+                <div class="dropdown">
+                    <button class="dropdown-button">Entity Type</button>
+                    <div class="dropdown-content">
+                        <select id="entity-type">
+                            <option value="track">Tracks</option>
+                            <option value="album">Albums</option>
+                            <option value="artist">Artists</option>
+                        </select>
+                    </div>
+                </div>
+            
+                <div class="dropdown">
+                    <button class="dropdown-button">Artist</button>
+                    <div class="dropdown-content">
+                        <!-- Category 1: Name/Title filters -->
+                        <label for="artist-name">Artist name:</label>
+                        <input type="text" id="artist-name" placeholder="e.g., The Beatles">
+                        
+                        <label for="artist-initial">Initial:</label>
+                        <input type="text" id="artist-initial" maxlength="1" placeholder="e.g., A">
+                        
+                        <label for="artist-includes">Name includes:</label>
+                        <input type="text" id="artist-includes" placeholder="e.g., The">
+                        
+                        <label for="artist-excludes">Name doesn't include:</label>
+                        <input type="text" id="artist-excludes" placeholder="e.g., Live">
+                        
+                        <div class="input-group">
+                            <label>Artist name length (min - max):</label>
+                            <div class="input-pair">
+                                <input type="number" id="artist-name-length-min" placeholder="0" min="0">
+                                <input type="number" id="artist-name-length-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <label>Artist name word count (min - max):</label>
+                            <div class="input-pair">
+                                <input type="number" id="artist-word-count-min" placeholder="0" min="0">
+                                <input type="number" id="artist-word-count-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+                        
+                        <hr class="separator">
+                
+                        <!-- Category 2: User data filters -->
+                        <div class="input-group">
+                            <label>Artist scrobbles (user) (min - max):</label>
+                            <div class="input-pair">
+                                <input type="number" id="artist-scrobble-count-min" placeholder="0" min="0">
+                                <input type="number" id="artist-scrobble-count-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <label>Artist rank (user) (from - to):</label>
+                            <div class="input-pair">
+                                <input type="number" id="artist-rank-min" placeholder="0" min="0">
+                                <input type="number" id="artist-rank-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+
+                        <label for="artist-first-scrobble-years">Year of first scrobble:</label>
+                        <input type="text" id="artist-first-scrobble-years" placeholder="e.g., 2019, 2020">
+                        
+                        <hr class="separator">
+                
+                        <!-- Category 3: Global (Last.fm detailed) filters -->
+                        <div class="input-group">
+                            <label>Artist global listeners (min - max):</label>
+                            <div class="input-pair">
+                                <input type="number" id="artist-listeners-min" placeholder="0" min="0">
+                                <input type="number" id="artist-listeners-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+                        
+                        <div class="input-group">
+                            <label>Artist scrobbles (global) (min - max):</label>
+                            <div class="input-pair">
+                                <input type="number" id="artist-scrobbles-min" placeholder="0" min="0">
+                                <input type="number" id="artist-scrobbles-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+
+                        <label for="artist-genre-country">Artist tags (e.g., genre or country):</label>
+                        <input type="text" id="artist-genre-country" placeholder="e.g., pop, rock, USA, South Korea">
+                        
+                    </div>
+                </div>
+                
+        
+                <!-- Album Filters -->
+                <div class="dropdown">
+                    <button class="dropdown-button">Album</button>
+                    <div class="dropdown-content">
+                        <!-- Category 1: Name/Title filters -->
+                        <label for="album-name">Album name:</label>
+                        <input type="text" id="album-name" placeholder="e.g., Abbey Road">
+                        
+                        <label for="album-initial">Initial:</label>
+                        <input type="text" id="album-initial" maxlength="1" placeholder="e.g., B">
+                        
+                        <label for="album-includes">Name includes:</label>
+                        <input type="text" id="album-includes" placeholder="e.g., Live">
+                        
+                        <label for="album-excludes">Name doesn't include:</label>
+                        <input type="text" id="album-excludes" placeholder="e.g., Deluxe">
+                        
+                        <div class="input-group">
+                            <label>Album name length (min - max):</label>
+                            <div class="input-pair">
+                                <input type="number" id="album-name-length-min" placeholder="0" min="0">
+                                <input type="number" id="album-name-length-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <label>Album name word count (min - max):</label>
+                            <div class="input-pair">
+                                <input type="number" id="album-word-count-min" placeholder="0" min="0">
+                                <input type="number" id="album-word-count-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+                        
+                        <hr class="separator">
+                        
+                        <!-- Category 2: User data filters -->
+                        <div class="input-group">
+                            <label>Album scrobbles (user) (min - max):</label>
+                            <div class="input-pair">
+                                <input type="number" id="album-scrobble-count-min" placeholder="0" min="0">
+                                <input type="number" id="album-scrobble-count-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <label>Album rank (user) (from - to):</label>
+                            <div class="input-pair">
+                                <input type="number" id="album-rank-min" placeholder="0" min="0">
+                                <input type="number" id="album-rank-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+
+                        <label for="album-first-scrobble-years">Year of first scrobble:</label>
+                        <input type="text" id="album-first-scrobble-years" placeholder="e.g., 2019, 2020">
+                        
+                        <hr class="separator">
+                        
+                        <!-- Category 3: Global (Last.fm detailed) filters -->
+                        <div class="input-group">
+                            <label>Album global listeners (min - max):</label>
+                            <div class="input-pair">
+                                <input type="number" id="album-listeners-min" placeholder="0" min="0">
+                                <input type="number" id="album-listeners-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+                        
+                        <div class="input-group">
+                            <label>Album scrobbles (global) (min - max):</label>
+                            <div class="input-pair">
+                                <input type="number" id="album-scrobbles-min" placeholder="0" min="0">
+                                <input type="number" id="album-scrobbles-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+                        
+                    </div>
+                </div>                
+        
+                <!-- Track Filters -->
+                <div class="dropdown">
+                    <button class="dropdown-button">Track</button>
+                    <div class="dropdown-content">
+                        <!-- Category 1: Title filters -->
+                        <label for="track-name">Track title:</label>
+                        <input type="text" id="track-name" placeholder="e.g., Yesterday">
+                        
+                        <label for="track-initial">Initial:</label>
+                        <input type="text" id="track-initial" maxlength="1" placeholder="e.g., C">
+                        
+                        <label for="track-includes">Title includes:</label>
+                        <input type="text" id="track-includes" placeholder="e.g., Love">
+                        
+                        <label for="track-excludes">Title doesn't include:</label>
+                        <input type="text" id="track-excludes" placeholder="e.g., Live">
+                        
+                        <div class="input-group">
+                            <label>Track title length (min - max):</label>
+                            <div class="input-pair">
+                                <input type="number" id="track-name-length-min" placeholder="0" min="0">
+                                <input type="number" id="track-name-length-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <label>Track title word count (min - max):</label>
+                            <div class="input-pair">
+                                <input type="number" id="track-word-count-min" placeholder="0" min="0">
+                                <input type="number" id="track-word-count-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+                        
+                        <hr class="separator">
+                        
+                        <!-- Category 2: User data filters -->
+                        <div class="input-group">
+                            <label>Track scrobbles (user) (min - max):</label>
+                            <div class="input-pair">
+                                <input type="number" id="track-scrobble-count-min" placeholder="0" min="0">
+                                <input type="number" id="track-scrobble-count-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <label>Track rank (user) (from - to):</label>
+                            <div class="input-pair">
+                                <input type="number" id="track-rank-min" placeholder="0" min="0">
+                                <input type="number" id="track-rank-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+
+                        <label for="track-first-scrobble-years">Year of first scrobble:</label>
+                        <input type="text" id="track-first-scrobble-years" placeholder="e.g., 2019, 2020">
+                        
+                        <hr class="separator">
+                        
+                        <!-- Category 3: Global (Last.fm detailed) filters -->
+                        <div class="input-group">
+                            <label>Track global listeners (min - max):</label>
+                            <div class="input-pair">
+                                <input type="number" id="track-listeners-min" placeholder="0" min="0">
+                                <input type="number" id="track-listeners-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+                        
+                        <div class="input-group">
+                            <label>Track scrobbles (global) (min - max):</label>
+                            <div class="input-pair">
+                                <input type="number" id="track-scrobbles-min" placeholder="0" min="0">
+                                <input type="number" id="track-scrobbles-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+                        
+                        <div class="input-group">
+                            <label>Track duration (min - max, sec):</label>
+                            <div class="input-pair">
+                                <input type="number" id="track-duration-min" placeholder="0" min="0">
+                                <input type="number" id="track-duration-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+                        
+                    </div>
+                </div>                
+        
+                <!-- Time Filters -->
+                <div class="dropdown">
+                    <button class="dropdown-button">Time</button>
+                    <div class="dropdown-content">
+
+                        <label for="last-n-days">Last n days:</label>
+                        <input type="number" id="last-n-days" placeholder="e.g., last 30 days">
+
+                        <label for="year">Year:</label>
+                        <input type="text" id="year" placeholder="e.g., 2019, 2020, 2021">
+
+                        <label for="month">Month:</label>
+                        <select id="month" multiple>
+                            <option value="1">January</option>
+                            <option value="2">February</option>
+                            <option value="3">March</option>
+                            <option value="4">April</option>
+                            <option value="5">May</option>
+                            <option value="6">June</option>
+                            <option value="7">July</option>
+                            <option value="8">August</option>
+                            <option value="9">September</option>
+                            <option value="10">October</option>
+                            <option value="11">November</option>
+                            <option value="12">December</option>
+                        </select>
+
+                        <label for="day-of-month">Day of month:</label>
+                        <input type="text" id="day-of-month" placeholder="e.g., 1, 15, 31">
+
+                        <label for="weekday">Weekday:</label>
+                        <select id="weekday" multiple>
+                            <option value="1">Monday</option>
+                            <option value="2">Tuesday</option>
+                            <option value="3">Wednesday</option>
+                            <option value="4">Thursday</option>
+                            <option value="5">Friday</option>
+                            <option value="6">Saturday</option>
+                            <option value="0">Sunday</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Active Filters Section -->
+            <div id="active-filters" class="active-filters"></div>
+
+            <div class="filter-buttons">
+                <button id="apply-filters">Apply Filters</button>
+                <button id="reset-filters">Reset Filters</button>
+            </div>
+        </section>        
+        
+		<section id="results-section">
+			<h2>Top Tracks</h2>
+			<div id="results"></div>
+		</section>
+
+	</main>
+    <footer>
+        <p style="font-style: italic; color: var(--secondary-text-color);">created by Aletheides</p>
+        <div class="social-icons">
+            <a href="https://github.com/Aletheides" title="GitHub"><i class="fab fa-github"></i></a>
+            <a href="https://www.reddit.com/user/Alet404/" title="Reddit"><i class="fab fa-reddit"></i></a>
+            <a href="https://ko-fi.com/lastfmlists" title="Buy me a coffee">
+                <svg width="1.3em" height="1.3em" viewBox="0 0 24 24" fill="currentColor" style="vertical-align: middle; margin-bottom: 0.2em;">
+                    <path d="M23.881 8.948c-.773-4.085-4.859-4.593-4.859-4.593H.723c-.604 0-.679.798-.679.798s-.082 7.324-.022 11.822c.164 2.424 2.586 2.672 2.586 2.672s8.267-.023 11.966-.049c2.438-.426 2.683-2.566 2.658-3.734 4.352.24 7.422-2.831 6.649-6.916zm-11.062 3.511c-1.246 1.453-4.011 3.976-4.011 3.976s-.121.119-.31.023c-.076-.057-.108-.09-.108-.09-.443-.441-3.368-3.049-4.034-3.954-.709-.965-1.041-2.7-.091-3.71.951-1.01 3.005-1.086 4.363.407 0 0 1.565-1.782 3.468-.963 1.904.82 1.832 3.011.723 4.311zm6.173.478c-.928.116-1.682.028-1.682.028V7.284h1.77s1.971.551 1.971 2.638c0 1.913-.985 2.667-2.059 3.015z"/>
+                </svg>
+            </a>
+        </div>
+    </footer>
+    <script>
+        document.querySelectorAll('.dropdown-button').forEach(button => {
+            button.addEventListener('click', () => {
+                button.classList.toggle('active');
+            });
+        });
+    </script>
+	<script src="script.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', (event) => {
+            const timezoneOffset = -new Date().getTimezoneOffset() / 60;
+            const timezoneSelect = document.getElementById('timezone');
+            for (let option of timezoneSelect.options) {
+                if (parseInt(option.value) === timezoneOffset) {
+                    option.selected = true;
+                    break;
+                }
+            }
+        });
+    </script>
+    <script>
+        const themeToggle = document.getElementById('theme-toggle');
+        themeToggle.addEventListener('click', () => {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            themeToggle.innerHTML = newTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+        });
+    </script>
+</body>
+</html>
