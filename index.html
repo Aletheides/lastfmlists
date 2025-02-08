@@ -31,36 +31,11 @@
 			</form>
 
             <input type="file" id="csv-file" placeholder="Upload a csv file" accept=".csv">
-            <label for="timezone">Timezone:</label>
-            <select id="timezone">
-                <option value="-12">UTC-12:00 (Baker Island)</option>
-                <option value="-11">UTC-11:00 (American Samoa)</option>
-                <option value="-10">UTC-10:00 (Hawaii)</option>
-                <option value="-9">UTC-09:00 (Alaska)</option>
-                <option value="-8">UTC-08:00 (Los Angeles, Vancouver)</option>
-                <option value="-7">UTC-07:00 (Phoenix, Denver)</option>
-                <option value="-6">UTC-06:00 (Chicago, Mexico City)</option>
-                <option value="-5">UTC-05:00 (New York, Toronto)</option>
-                <option value="-4">UTC-04:00 (Santiago, Halifax)</option>
-                <option value="-3">UTC-03:00 (São Paulo, Buenos Aires)</option>
-                <option value="-2">UTC-02:00 (South Georgia)</option>
-                <option value="-1">UTC-01:00 (Cape Verde)</option>
-                <option value="0">UTC+00:00 (London, Dublin)</option>
-                <option value="1">UTC+01:00 (Paris, Berlin)</option>
-                <option value="2">UTC+02:00 (Cairo, Helsinki)</option>
-                <option value="3">UTC+03:00 (Moscow, Istanbul)</option>
-                <option value="4">UTC+04:00 (Dubai, Baku)</option>
-                <option value="5">UTC+05:00 (Karachi, Tashkent)</option>
-                <option value="6">UTC+06:00 (Dhaka, Almaty)</option>
-                <option value="7">UTC+07:00 (Bangkok, Jakarta)</option>
-                <option value="8">UTC+08:00 (Singapore, Beijing)</option>
-                <option value="9">UTC+09:00 (Tokyo, Seoul)</option>
-                <option value="10">UTC+10:00 (Sydney, Melbourne)</option>
-                <option value="11">UTC+11:00 (Solomon Islands)</option>
-                <option value="12">UTC+12:00 (Auckland, Fiji)</option>
-                <option value="13">UTC+13:00 (Samoa, Tonga)</option>
-                <option value="14">UTC+14:00 (Line Islands)</option>
-            </select>
+
+            <label for="load-all-data" class="inline-checkbox">
+                Load ALL details (may take a while):
+                <input type="checkbox" id="load-all-data">
+            </label>
 
               <!-- This div will show loading messages for detailed stats -->
             <div id="loading-stats" style="font-style: italic; color: #888;"></div>
@@ -83,6 +58,7 @@
                     <div class="dropdown-content">
                         <select id="sorting-basis">
                             <option value="scrobbles">Number of scrobbles</option>
+                            <option value="time-spent-listening">Time spent listening</option>
                             <option value="separate-days">Scrobbled on different days</option>
                             <option value="separate-weeks">Scrobbled on different weeks</option>
                             <option value="separate-months">Scrobbled on different months</option>
@@ -90,6 +66,7 @@
                             <option value="consecutive-days">Max listening streak (days)</option>
                             <option value="consecutive-weeks">Max listening streak (weeks)</option>
                             <option value="consecutive-months">Max listening streak (months)</option>
+                            <option value="highest-listening-percentage">Percentage of global scrobbles</option>
                         </select>
                     </div>
                 </div>
@@ -109,6 +86,12 @@
                 <div class="dropdown">
                     <button class="dropdown-button">Artist</button>
                     <div class="dropdown-content">
+
+                        <label for="max-per-artist">Max tracks/artist:</label>
+                        <input type="number" id="max-per-artist" placeholder="e.g., 1" min="1">
+
+                        <hr class="separator">
+
                         <!-- Category 1: Name/Title filters -->
                         <label for="artist-name">Artist name:</label>
                         <input type="text" id="artist-name" placeholder="e.g., The Beatles">
@@ -150,10 +133,18 @@
                         </div>
 
                         <div class="input-group">
-                            <label>Artist rank (user) (from - to):</label>
+                            <label>Artist rank (user) (top - bottom):</label>
                             <div class="input-pair">
                                 <input type="number" id="artist-rank-min" placeholder="0" min="0">
                                 <input type="number" id="artist-rank-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <label>Artist track count (min - max)</label>
+                            <div class="input-pair">
+                                <input type="number" id="artist-track-count-min" placeholder="0" min="0">
+                                <input type="number" id="artist-track-count-max" placeholder="∞" min="0">
                             </div>
                         </div>
 
@@ -174,13 +165,13 @@
                         <div class="input-group">
                             <label>Artist scrobbles (global) (min - max):</label>
                             <div class="input-pair">
-                                <input type="number" id="artist-scrobbles-min" placeholder="0" min="0">
-                                <input type="number" id="artist-scrobbles-max" placeholder="∞" min="0">
+                                <input type="number" id="artist-global-scrobbles-min" placeholder="0" min="0">
+                                <input type="number" id="artist-global-scrobbles-max" placeholder="∞" min="0">
                             </div>
                         </div>
 
-                        <label for="artist-genre-country">Artist tags (e.g., genre or country):</label>
-                        <input type="text" id="artist-genre-country" placeholder="e.g., pop, rock, USA, South Korea">
+                        <label for="artist-tags">Artist tags (e.g., genre or country):</label>
+                        <input type="text" id="artist-tags" placeholder="e.g., pop, rock, american">
                         
                     </div>
                 </div>
@@ -190,6 +181,7 @@
                 <div class="dropdown">
                     <button class="dropdown-button">Album</button>
                     <div class="dropdown-content">
+
                         <!-- Category 1: Name/Title filters -->
                         <label for="album-name">Album name:</label>
                         <input type="text" id="album-name" placeholder="e.g., Abbey Road">
@@ -231,12 +223,21 @@
                         </div>
 
                         <div class="input-group">
-                            <label>Album rank (user) (from - to):</label>
+                            <label>Album rank (user) (top - bottom):</label>
                             <div class="input-pair">
                                 <input type="number" id="album-rank-min" placeholder="0" min="0">
                                 <input type="number" id="album-rank-max" placeholder="∞" min="0">
                             </div>
                         </div>
+
+                        <div class="input-group">
+                            <label>Album track count (min - max)</label>
+                            <div class="input-pair">
+                                <input type="number" id="album-track-count-min" placeholder="0" min="0">
+                                <input type="number" id="album-track-count-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+
 
                         <label for="album-first-scrobble-years">Year of first scrobble:</label>
                         <input type="text" id="album-first-scrobble-years" placeholder="e.g., 2019, 2020">
@@ -255,8 +256,8 @@
                         <div class="input-group">
                             <label>Album scrobbles (global) (min - max):</label>
                             <div class="input-pair">
-                                <input type="number" id="album-scrobbles-min" placeholder="0" min="0">
-                                <input type="number" id="album-scrobbles-max" placeholder="∞" min="0">
+                                <input type="number" id="album-global-scrobbles-min" placeholder="0" min="0">
+                                <input type="number" id="album-global-scrobbles-max" placeholder="∞" min="0">
                             </div>
                         </div>
                         
@@ -308,7 +309,7 @@
                         </div>
 
                         <div class="input-group">
-                            <label>Track rank (user) (from - to):</label>
+                            <label>Track rank (user) (top - bottom):</label>
                             <div class="input-pair">
                                 <input type="number" id="track-rank-min" placeholder="0" min="0">
                                 <input type="number" id="track-rank-max" placeholder="∞" min="0">
@@ -332,8 +333,8 @@
                         <div class="input-group">
                             <label>Track scrobbles (global) (min - max):</label>
                             <div class="input-pair">
-                                <input type="number" id="track-scrobbles-min" placeholder="0" min="0">
-                                <input type="number" id="track-scrobbles-max" placeholder="∞" min="0">
+                                <input type="number" id="track-global-scrobbles-min" placeholder="0" min="0">
+                                <input type="number" id="track-global-scrobbles-max" placeholder="∞" min="0">
                             </div>
                         </div>
                         
@@ -356,6 +357,12 @@
                         <label for="last-n-days">Last n days:</label>
                         <input type="number" id="last-n-days" placeholder="e.g., last 30 days">
 
+                        <label>Date range (start):</label>           
+                        <input type="date" id="date-range-start">
+
+                        <label>Date range (end):</label>
+                        <input type="date" id="date-range-end">
+                            
                         <label for="year">Year:</label>
                         <input type="text" id="year" placeholder="e.g., 2019, 2020, 2021">
 
@@ -388,6 +395,14 @@
                             <option value="6">Saturday</option>
                             <option value="0">Sunday</option>
                         </select>
+
+                        <div class="input-group">
+                            <label>Scrobble order range (first - last):</label>
+                            <div class="input-pair">
+                                <input type="number" id="scrobble-order-from" placeholder="0" min="0">
+                                <input type="number" id="scrobble-order-to" placeholder="∞" min="0">
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -431,18 +446,7 @@
         });
     </script>
 	<script src="script.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', (event) => {
-            const timezoneOffset = -new Date().getTimezoneOffset() / 60;
-            const timezoneSelect = document.getElementById('timezone');
-            for (let option of timezoneSelect.options) {
-                if (parseInt(option.value) === timezoneOffset) {
-                    option.selected = true;
-                    break;
-                }
-            }
-        });
-    </script>
+
     <script>
         const themeToggle = document.getElementById('theme-toggle');
         themeToggle.addEventListener('click', () => {
