@@ -4,15 +4,22 @@ let lastfmData = [];
 let artistsData = []; // [{ name, listeners, playcount, debutYear }]
 let albumsData = [];  // [{ title, artist, releaseDate, playcount }]
 let tracksData = [];  // [{ title, album, listeners, playcount }]
+let artistDataMap = {};
+let albumDataMap = {};
+let trackDataMap = {};
 let topArtists = [];
 let topAlbums = [];
 let topTracks = [];
+let activeFilters = [];
 const DB_NAME = 'lastfmDataDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'userData';
 const API_KEY = "edbd779d54b373b8710af5c346148ae3";
 const resultsDiv = document.getElementById("results");
 const loadingDiv = document.getElementById("loading-stats");
+let artistLimit = 250;
+let albumLimit = 500;
+let trackLimit = 1000;
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -190,7 +197,6 @@ async function fetchListeningHistory(username) {
 
 async function fetchRecentTracksSince(username, latestTimestamp) {
     const baseUrl = `https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=${username}&api_key=${API_KEY}&format=json&extended=1&limit=200&autocorrect=0`;
-    const timezoneOffset = new Date().getTimezoneOffset() * 60000; // in milliseconds
     let newTracks = [];
     let page = 1;
     let totalPages = 1;
@@ -326,16 +332,14 @@ async function fetchArtistDetails(artistName) {
     }
 }
 
-async function fetchAllArtistDetails(artists, delay = 10) {
+async function fetchAllArtistDetails(artists, limit) {
     const results = [];
     // Limit to the top 250 artists (or whichever number you choose)
-    const limitedArtists = artists.slice(0, 250);
+    const limitedArtists = artists.slice(0, limit);
     
     for (const artist of limitedArtists) {
       const details = await fetchArtistDetails(artist.name);
       results.push(details);
-      // Wait a little between requests to help avoid rate limiting.
-      await sleep(delay);
     }
     
     // Remove any null results
@@ -425,16 +429,14 @@ async function fetchAlbumDetails(album) {
     }
 }
 
-async function fetchAllAlbumDetails(albums, delay = 10) {
+async function fetchAllAlbumDetails(albums, limit) {
     const results = [];
     // Limit to the top 500 albums (or whichever number you choose)
-    const limitedAlbums = albums.slice(0, 500);
+    const limitedAlbums = albums.slice(0, limit);
     
     for (const album of limitedAlbums) {
       const details = await fetchAlbumDetails(album);
       results.push(details);
-      // Wait a little between requests.
-      await sleep(delay);
     }
     
     return results.filter(result => result !== null);
@@ -526,7 +528,14 @@ async function fetchTrackDetails(track) {
 				};
 			} else {
 				console.warn("No details found for track:", track.name);
-				return null;
+				return {
+					name: "Unknown",
+					artist: "Unknown",
+					album: "Unknown",
+					duration: 0,
+					listeners: 0,
+					playcount: 0,
+				};
 			}
 		} catch (error) {
 			console.error(`Error fetching details for track ${track.name} by ${track.artist}:`, error);
@@ -543,11 +552,11 @@ async function fetchTrackDetails(track) {
 	return null; // Fallback return in case of failure
 }
 
-async function fetchAllTrackDetails(tracks) {
-	console.log("Fetching track details...");
-
+async function fetchAllTrackDetails(tracks, limit) {
 	const results = [];
-	for (const track of tracks) {
+    const limitedTracks = tracks.slice(0, limit);
+	
+	for (const track of limitedTracks) {
 		const details = await fetchTrackDetails(track); // Wait for each track before proceeding
 		results.push(details);
 	}
@@ -582,6 +591,7 @@ document.getElementById("username-form").addEventListener("submit", async (event
         });
     
         // Fetch recent tracks from Last.fm that occurred after the latest saved track.
+        loadingDiv.innerHTML = "<p>Fetching recent tracks...</p>";
         let newTracks = await fetchRecentTracksSince(username, latestTimestamp);
     
         // Merge new tracks with the saved tracks, keeping chronological order.
@@ -599,13 +609,39 @@ document.getElementById("username-form").addEventListener("submit", async (event
         return true;
     });
 
+    // Sort allTracks by date (assuming track.Date is a timestamp in milliseconds as a string)
+    allTracks.sort((a, b) => parseInt(a.Date, 10) - parseInt(b.Date, 10));
+
+    // Assign an order key (index + 1) to each track
+    allTracks = allTracks.map((track, index) => {
+        track.order = index + 1;
+        return track;
+    });
+
 	// ✅ ALWAYS re-fetch the top stats to update rankings and counts!
 	topArtists = await fetchTopArtists(username);
 	topAlbums = await fetchTopAlbums(username);
 	topTracks = await fetchTopTracks(username);
 
+    // Reset track counts in artistsData and albumsData
+    const artistTrackSets = {};
+    const albumTrackSets = {};
+
+    allTracks.forEach(item => {
+        const artistKey = item.Artist.trim().toLowerCase();
+        const albumKey = `${item.Album.trim().toLowerCase()}||${item.Artist.trim().toLowerCase()}`;
+        const trackKey = item.Track.trim().toLowerCase();
+
+        if (!artistTrackSets[artistKey]) artistTrackSets[artistKey] = new Set();
+        if (!albumTrackSets[albumKey]) albumTrackSets[albumKey] = new Set();
+
+        artistTrackSets[artistKey].add(trackKey);
+        albumTrackSets[albumKey].add(trackKey);
+    });
+
 	// Objects to track earliest scrobbles
 	const firstScrobbles = { artists: {}, albums: {}, tracks: {} };
+    loadingDiv.innerHTML = "<p>Processing first scrobbles...</p>";
 
 	// Iterate over allTracks to determine first scrobbles
 	allTracks.forEach(track => {
@@ -637,18 +673,21 @@ document.getElementById("username-form").addEventListener("submit", async (event
             name: artist.name,
             rank: index + 1, // Overwrite rank from the new fetch
             firstscrobble: firstScrobbles.artists?.[key] ?? null,
-            user_scrobbles: parseInt(artist.user_scrobbles, 10) || 0
+            user_scrobbles: parseInt(artist.user_scrobbles, 10) || 0,
+            track_count: artistTrackSets[key] ? artistTrackSets[key].size : 0
         };
     });
     
+    // Create newAlbumsData with track counts
     const newAlbumsData = topAlbums.map((album, index) => {
-        const key = `${album.name.trim().toLowerCase()}_${album.artist.trim().toLowerCase()}`;
+        const key = `${album.name.trim().toLowerCase()}||${album.artist.trim().toLowerCase()}`;
         return {
             name: album.name,
             artist: album.artist,
             rank: index + 1,
             firstscrobble: firstScrobbles.albums?.[key] ?? null,
-            user_scrobbles: parseInt(album.user_scrobbles, 10) || 0
+            user_scrobbles: parseInt(album.user_scrobbles, 10) || 0,
+            track_count: albumTrackSets[key] ? albumTrackSets[key].size : 0
         };
     });
     
@@ -663,6 +702,8 @@ document.getElementById("username-form").addEventListener("submit", async (event
         };
     });
     
+    loadingDiv.innerHTML = "<p>Merging data...</p>";
+
     // Merge new data into the existing arrays (only updating the keys specified)
     artistsData = mergeData(artistsData, newArtistsData, item => item.name.trim().toLowerCase());
     albumsData = mergeData(albumsData, newAlbumsData, 
@@ -673,6 +714,27 @@ document.getElementById("username-form").addEventListener("submit", async (event
     console.log("Merged artistsData:", artistsData);
 	console.log("Merged albumsData:", albumsData);
 	console.log("Merged tracksData:", tracksData);
+
+    loadingDiv.innerHTML = "<p>Mapping artists...</p>";
+
+    artistDataMap = artistsData.reduce((map, artist) => {
+        map[artist.name.toLowerCase()] = artist;
+        return map;
+    }, {});
+
+    loadingDiv.innerHTML = "<p>Mapping albums...</p>";
+    
+    albumDataMap = albumsData.reduce((map, album) => {
+        map[`${album.name.toLowerCase()}||${album.artist.toLowerCase()}`] = album;
+        return map;
+    }, {});
+
+    loadingDiv.innerHTML = "<p>Mapping tracks...</p>";
+    
+    trackDataMap = tracksData.reduce((map, track) => {
+        map[`${track.name.toLowerCase()}||${track.artist.toLowerCase()}`] = track;
+        return map;
+    }, {});
 
 	// ✅ Enable "Load Detailed Data" button
 	const loadDetailedBtn = document.getElementById("load-detailed-data");
@@ -696,26 +758,26 @@ document.getElementById("load-detailed-data").addEventListener("click", async ()
 
 	// For Artists: choose those with >100 scrobbles or the top 250 (whichever is more)
 	let selectedArtists = topArtists.filter(artist => artist.playcount > 100);
-	if (selectedArtists.length < 250) {
-		selectedArtists = topArtists.slice(0, 250);
+	if (selectedArtists.length < artistLimit) {
+		selectedArtists = topArtists.slice(0, artistLimit);
 	}
-	const fetchedArtists = await fetchAllArtistDetails(selectedArtists, 250);
+	const fetchedArtists = await fetchAllArtistDetails(selectedArtists, artistLimit);
 	console.log("Fetched artist details:", fetchedArtists);
 
 	// For Albums: choose those with >10 scrobbles or the top 500 (whichever is more)
 	let selectedAlbums = topAlbums.filter(album => album.playcount > 10);
-	if (selectedAlbums.length < 500) {
-		selectedAlbums = topAlbums.slice(0, 500);
+	if (selectedAlbums.length < albumLimit) {
+		selectedAlbums = topAlbums.slice(0, albumLimit);
 	}
-	const fetchedAlbums = await fetchAllAlbumDetails(selectedAlbums, 250);
+	const fetchedAlbums = await fetchAllAlbumDetails(selectedAlbums, albumLimit);
 	console.log("Fetched album details:", fetchedAlbums);
 
 	// For Tracks: choose those with >5 scrobbles or the top 1000 (whichever is more)
 	let selectedTracks = topTracks.filter(track => track.playcount > 5);
-	if (selectedTracks.length < 1000) {
-		selectedTracks = topTracks.slice(0, 1000);
+	if (selectedTracks.length < trackLimit) {
+		selectedTracks = topTracks.slice(0, trackLimit);
 	}
-	const fetchedTracks = await fetchAllTrackDetails(selectedTracks, 250);
+	const fetchedTracks = await fetchAllTrackDetails(selectedTracks, trackLimit);
 	console.log("Fetched track details:", fetchedTracks);
 
 	// Process fetched data and format it before merging
@@ -760,58 +822,73 @@ document.getElementById("load-detailed-data").addEventListener("click", async ()
 	applyFilters();
 });
 
+function handleLoadAllDataToggle() {
+    const loadAllData = document.getElementById("load-all-data").checked;
+
+    // If checked, set limits to maximum possible values (effectively no limit)
+    artistLimit = loadAllData ? Infinity : 250;
+    albumLimit = loadAllData ? Infinity : 500;
+    trackLimit = loadAllData ? Infinity : 1000;
+
+}
+
+// Attach event listener to checkbox
+document.getElementById("load-all-data").addEventListener("change", handleLoadAllDataToggle);
+
 // Load CSV file
 document.getElementById('csv-file').addEventListener('change', async (event) => {
-	const file = event.target.files[0];
-	if (!file) return;
+    const file = event.target.files[0];
+    if (!file) return;
 
-	const reader = new FileReader();
-	reader.onload = async (e) => {
-		const csvData = e.target.result;
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+        const csvData = e.target.result;
 
-		// ✅ Parse the CSV (including extracting username)
-		allTracks = parseCSV(csvData);
+        // ✅ Parse the CSV (including extracting username)
+        allTracks = parseCSV(csvData);
 
         // ✅ Try extracting the username if missing
         if (!allTracks.username) {
-	        console.warn("Username missing from parsed data, checking CSV manually...");
-	        const firstLine = csvData.split("\n")[0]; // Get the first line
-	        console.log("CSV First Line:", firstLine);
-	
-	        const match = firstLine.match(/Date#(.*)/);
-	        if (match && match[1]) {
-		        allTracks.username = match[1].trim();
-		        console.log("Extracted username from CSV:", allTracks.username);
-	        } else {
-		        console.error("Failed to extract Last.fm username from CSV.");
-		        return;
-	        }
-}
+            console.warn("Username missing from parsed data, checking CSV manually...");
+            const firstLine = csvData.split("\n")[0]; // Get the first line
+            console.log("CSV First Line:", firstLine);
 
-		// ✅ Ensure a username exists after parsing
-		if (!allTracks.username) {
-			console.error("Failed to extract Last.fm username from CSV.");
-			return;
-		}
-		const username = allTracks.username;
-		console.log("Detected Last.fm username:", username);
+            const match = firstLine.match(/Date#(.*)/);
+            if (match && match[1]) {
+                allTracks.username = match[1].trim();
+                console.log("Extracted username from CSV:", allTracks.username);
+            } else {
+                console.error("Failed to extract Last.fm username from CSV.");
+                return;
+            }
+        }
 
-		// ✅ Initialize tracking objects
-		raw_data = [];
-		const firstScrobbles = { artists: {}, albums: {}, tracks: {} };
+        // ✅ Ensure a username exists after parsing
+        if (!allTracks.username) {
+            console.error("Failed to extract Last.fm username from CSV.");
+            return;
+        }
+        const username = allTracks.username;
+        console.log("Detected Last.fm username:", username);
 
-		// ✅ Iterate over allTracks to determine first scrobbles
-		allTracks.forEach(track => {
-            if (!track.Artist || !track.Track || !track.Date) {
+        // ✅ Initialize tracking objects
+        raw_data = [];
+        const firstScrobbles = { artists: {}, albums: {}, tracks: {} };
+        const artistTrackSets = {};
+        const albumTrackSets = {};
+
+        // ✅ Iterate over allTracks to determine first scrobbles and track counts
+        allTracks.forEach(track => {
+            if (!track.artist || !track.track || !track.date) {
                 console.warn("Skipping track due to missing data:", track);
                 return;
             }
-        
-            const artistKey = track.Artist.trim().toLowerCase();
-            const albumKey = track.Album?.trim() ? `${track.Album.trim().toLowerCase()}_${artistKey}` : null;
-            const trackKey = `${track.Track.trim().toLowerCase()}_${artistKey}`;
-            const uts = parseInt(track.Date, 10); // Already in milliseconds
-        
+
+            const artistKey = track.artist.trim().toLowerCase();
+            const albumKey = track.album?.trim() ? `${track.album.trim().toLowerCase()}_${artistKey}` : null;
+            const trackKey = `${track.track.trim().toLowerCase()}_${artistKey}`;
+            const uts = parseInt(track.date, 10); // Already in milliseconds
+
             if (!firstScrobbles.artists[artistKey] || uts < firstScrobbles.artists[artistKey]) {
                 firstScrobbles.artists[artistKey] = uts;
             }
@@ -822,98 +899,129 @@ document.getElementById('csv-file').addEventListener('change', async (event) => 
                 firstScrobbles.tracks[trackKey] = uts;
             }
 
-			// Add to raw_data
-			raw_data.push({
-				artist: track.Artist,
-				album: track.Album,
-				track: track.Track,
-				date: uts
-			});
-		});
+            if (!artistTrackSets[artistKey]) artistTrackSets[artistKey] = new Set();
+            if (!albumTrackSets[albumKey]) albumTrackSets[albumKey] = new Set();
+            
+            artistTrackSets[artistKey].add(trackKey);
+            albumTrackSets[albumKey].add(trackKey);
 
-		// ✅ Sort by Date (oldest first)
-		raw_data.sort((a, b) => a.date - b.date);
+            // Add to raw_data
+            raw_data.push({
+                Artist: track.artist,
+                Album: track.album,
+                Track: track.track,
+                Date: uts
+            });
+        });
 
-		// ✅ Fetch top stats using the extracted username
-		const topArtists = await fetchTopArtists(username);
-		const topAlbums = await fetchTopAlbums(username);
-		const topTracks = await fetchTopTracks(username);
+        // ✅ Sort by Date (oldest first) and assign order
+        raw_data.sort((a, b) => a.date - b.date);
+        raw_data.forEach((track, index) => {
+            track.order = index + 1;
+        });
 
-		// ✅ Ensure first scrobbles are properly retrieved
-		console.log("First Scrobbles Data:", firstScrobbles);
+        allTracks = raw_data; // Update allTracks with sorted data
 
-		// ✅ Update data arrays with correct first scrobbles
-		artistsData = topArtists.map((artist, index) => {
+        // ✅ Fetch top stats using the extracted username
+        const topArtists = await fetchTopArtists(username);
+        const topAlbums = await fetchTopAlbums(username);
+        const topTracks = await fetchTopTracks(username);
+
+        // ✅ Ensure first scrobbles are properly retrieved
+        console.log("First Scrobbles Data:", firstScrobbles);
+
+        // ✅ Update data arrays with correct first scrobbles
+        artistsData = topArtists.map((artist, index) => {
             if (!artist.name) return null; // Prevent undefined objects
-        
+
             const artistKey = artist.name.trim().toLowerCase();
             return {
                 name: artist.name,
                 rank: index + 1,
-                firstscrobble: firstScrobbles.artists?.[artistKey] ?? null, // Use optional chaining & default to null
-                user_scrobbles: parseInt(artist.user_scrobbles, 10) || 0
+                firstscrobble: firstScrobbles.artists?.[artistKey] ?? null,
+                user_scrobbles: parseInt(artist.user_scrobbles, 10) || 0,
+                track_count: artistTrackSets[artistKey] ? artistTrackSets[artistKey].size : 0,
             };
-        }).filter(Boolean); // Remove null values
-        
-        
+        }).filter(Boolean);
+
         albumsData = topAlbums.map((album, index) => {
-            if (!album.name || !album.artist) return null; // Skip bad entries
-        
+            if (!album.name || !album.artist) return null;
+
             const albumKey = `${album.name.trim().toLowerCase()}_${album.artist.trim().toLowerCase()}`;
             return {
                 name: album.name,
                 artist: album.artist,
                 rank: index + 1,
                 firstscrobble: firstScrobbles.albums?.[albumKey] ?? null,
-                user_scrobbles: parseInt(album.user_scrobbles, 10) || 0
+                user_scrobbles: parseInt(album.user_scrobbles, 10) || 0,
+                track_count: albumTrackSets[albumKey] ? albumTrackSets[albumKey].size : 0,
             };
-        }).filter(Boolean);        
-        
-        
+        }).filter(Boolean);
+
         tracksData = topTracks.map((track, index) => {
             if (!track.name || !track.artist) return null;
-        
+
             const trackKey = `${track.name.trim().toLowerCase()}_${track.artist.trim().toLowerCase()}`;
             return {
                 name: track.name,
                 artist: track.artist,
                 rank: index + 1,
                 firstscrobble: firstScrobbles.tracks?.[trackKey] ?? null,
-                user_scrobbles: parseInt(track.user_scrobbles, 10) || 0
+                user_scrobbles: parseInt(track.user_scrobbles, 10) || 0,
             };
         }).filter(Boolean);
-                
 
-		// ✅ Enable "Load Detailed Data" button
-		const loadDetailedBtn = document.getElementById("load-detailed-data");
-		loadDetailedBtn.disabled = false;
-		loadDetailedBtn.title = "Click to load detailed data!";
+        loadingDiv.innerHTML = "<p>Mapping artists...</p>";
 
-		console.log("Final allTracks:", allTracks);
-		console.log("Updated artistsData:", artistsData);
-		console.log("Updated albumsData:", albumsData);
-		console.log("Updated tracksData:", tracksData);
+        artistDataMap = artistsData.reduce((map, artist) => {
+            map[artist.name.toLowerCase()] = artist;
+            return map;
+        }, {});
+    
+        loadingDiv.innerHTML = "<p>Mapping albums...</p>";
+        
+        albumDataMap = albumsData.reduce((map, album) => {
+            map[`${album.name.toLowerCase()}||${album.artist.toLowerCase()}`] = album;
+            return map;
+        }, {});
+    
+        loadingDiv.innerHTML = "<p>Mapping tracks...</p>";
+        
+        trackDataMap = tracksData.reduce((map, track) => {
+            map[`${track.name.toLowerCase()}||${track.artist.toLowerCase()}`] = track;
+            return map;
+        }, {});
 
-		loadingDiv.innerHTML = ""; // Clear loading message
+        // ✅ Enable "Load Detailed Data" button
+        const loadDetailedBtn = document.getElementById("load-detailed-data");
+        loadDetailedBtn.disabled = false;
+        loadDetailedBtn.title = "Click to load detailed data!";
 
-		// ✅ Update UI
-		applyFilters();
-		updateActiveFilters();
-	};
-	reader.readAsText(file);
+        console.log("Final allTracks:", allTracks);
+        console.log("Updated artistsData:", artistsData);
+        console.log("Updated albumsData:", albumsData);
+        console.log("Updated tracksData:", tracksData);
+
+        loadingDiv.innerHTML = ""; // Clear loading message
+
+        // ✅ Update UI
+        applyFilters();
+        updateActiveFilters();
+    };
+    reader.readAsText(file);
 });
 
 // Parse CSV data
 function parseCSV(data) {
     const lines = data.trim().split('\n');
-    const headers = lines[0].split(';').map(header => header.trim());
+    const headers = lines[0].split(';').map(header => header.trim().toLowerCase());
 
-    // Find the date header and rename it to 'Date'
-    const dateHeader = headers.find(header => header.startsWith('Date#'));
-    const renamedHeaders = headers.map(header => (header === dateHeader ? 'Date' : header));
+    // Find the date header and rename it to 'date'
+    const dateHeader = headers.find(header => header.startsWith('date#'));
+    const renamedHeaders = headers.map(header => (header === dateHeader ? 'date' : header));
 
     // Get the timezone offset from the dropdown
-    const timezoneOffset = parseInt(document.getElementById("timezone").value) || 0;
+    const timezoneOffset = new Date().getTimezoneOffset() * 60000;
 
     return lines.slice(1).map(line => {
         const values = line.match(/(".*?"|[^;]+)(?=;|$)/g)
@@ -925,10 +1033,10 @@ function parseCSV(data) {
         }, {});
 
         // Adjust the date based on the timezone offset
-        if (track.Date) {
-            const timestamp = parseInt(track.Date);
+        if (track.date) {
+            const timestamp = parseInt(track.date);
             if (!isNaN(timestamp)) {
-                track.Date = (timestamp + timezoneOffset * 3600000).toString();
+                track.date = (timestamp - timezoneOffset).toString();
             }
         }
 
@@ -1052,16 +1160,11 @@ function calculateSeparateScrobbles(tracks, period, entityType = 'track') {
     return Object.values(groups);
 }
 
-/**
- * Calculate the maximum number of consecutive scrobbles for an entity.
- * @param {Array} tracks - Array of track objects.
- * @param {string} [entityType='track'] - Grouping level: 'track', 'album', or 'artist'.
- * @returns {Array} - Array of grouped objects with consecutive scrobble counts and timestamps.
- */
 function calculateConsecutiveScrobbles(tracks, entityType = 'track') {
-
+    // Sort tracks by Date (ascending order)
     tracks.sort((a, b) => parseInt(a.Date) - parseInt(b.Date));
-    // Define grouping key based on entityType.
+
+    // Define grouping key based on entityType
     const groupKeyFunc = (track) => {
         if (entityType === 'track') {
             return `${track.Artist} - ${track.Track}`;
@@ -1076,6 +1179,7 @@ function calculateConsecutiveScrobbles(tracks, entityType = 'track') {
 
     const groups = tracks.reduce((acc, track, index, array) => {
         const key = groupKeyFunc(track);
+        
         if (!acc[key]) {
             acc[key] = {
                 maxConsecutive: 0,
@@ -1094,18 +1198,25 @@ function calculateConsecutiveScrobbles(tracks, entityType = 'track') {
                 acc[key].name = track.Artist;
             }
         }
-        // When the group key changes (or first element), reset the current consecutive count.
-        if (index === 0 || groupKeyFunc(array[index - 1]) !== key) {
+
+        // Get the previous track in the array
+        const prevTrack = index > 0 ? array[index - 1] : null;
+        
+        // If it's the first track in group OR order is NOT consecutive, reset count
+        if (!prevTrack || groupKeyFunc(prevTrack) !== key || track.order !== prevTrack.order + 1) {
             acc[key].currentConsecutive = 1;
             acc[key].currentStartTime = track.Date;
         } else {
             acc[key].currentConsecutive++;
         }
+
+        // Update max consecutive count
         if (acc[key].currentConsecutive > acc[key].maxConsecutive) {
             acc[key].maxConsecutive = acc[key].currentConsecutive;
             acc[key].startTime = acc[key].currentStartTime;
             acc[key].endTime = track.Date;
         }
+
         return acc;
     }, {});
 
@@ -1235,7 +1346,6 @@ function getMatchingTrackTime(groupTracks, periodKey, period) {
 	return matchingTrack ? matchingTrack.Date : null;
 }
 
-
 // Convert a date to a unique week identifier
 function getWeekIdentifier(date) {
     const firstJan = new Date(date.getFullYear(), 0, 1);
@@ -1251,6 +1361,175 @@ function isNextPeriod(prev, curr, periodType) {
         return curr === prev + 1; // Next week/month in numerical sequence
     }
     return false;
+}
+
+function calculateListeningPercentage(tracks, entityType = 'track') {
+    console.log(`Calculating listening percentage for entityType: ${entityType}`);
+
+    // Grouping key based on entityType
+    const groupKeyFunc = (track) => {
+        if (entityType === 'track') {
+            return `${track.Artist} - ${track.Track}`; // Group by Artist & Track
+        } else if (entityType === 'album') {
+            return `${track.Album}||${track.Artist}`;   // Group by Album & Artist
+        } else if (entityType === 'artist') {
+            return track.Artist;                       // Group by Artist only
+        } else {
+            return `${track.Artist} - ${track.Track}`;
+        }
+    };
+
+    // To track processed entities and avoid duplication in calculations
+    const processedEntities = new Set();
+
+    const groups = tracks.reduce((acc, track) => {
+        const key = groupKeyFunc(track);
+        if (processedEntities.has(key)) {
+            return acc; // Skip processing if the entity has already been processed
+        }
+        processedEntities.add(key);
+
+        if (!acc[key]) {
+            acc[key] = {
+                listeningPercentage: 0,
+                scrobbles: 0,
+                playcount: 0
+            };
+            if (entityType === 'track') {
+                acc[key].Artist = track.Artist;
+                acc[key].Track = track.Track;
+            } else if (entityType === 'album') {
+                acc[key].name = track.Album;
+                acc[key].artist = track.Artist;
+            } else if (entityType === 'artist') {
+                acc[key].name = track.Artist;
+            }
+        }
+
+        // Get the playcount and user scrobbles from the data maps for album/artist/track
+        let scrobbles = 0;
+        let playcount = 0;
+
+        // Assuming trackDataMap, albumDataMap, and artistDataMap are available and contain playcount and user_scrobbles
+        if (entityType === 'track') {
+            scrobbles = trackDataMap[`${track.Track.toLowerCase()}||${track.Artist.toLowerCase()}`]?.user_scrobbles || 0;
+            playcount = trackDataMap[`${track.Track.toLowerCase()}||${track.Artist.toLowerCase()}`]?.playcount || 0;
+        } else if (entityType === 'album') {
+            scrobbles = albumDataMap[`${track.Album.toLowerCase()}||${track.Artist.toLowerCase()}`]?.user_scrobbles || 0;
+            playcount = albumDataMap[`${track.Album.toLowerCase()}||${track.Artist.toLowerCase()}`]?.playcount || 0;
+        } else if (entityType === 'artist') {
+            scrobbles = artistDataMap[track.Artist.toLowerCase()]?.user_scrobbles || 0;
+            playcount = artistDataMap[track.Artist.toLowerCase()]?.playcount || 0;
+        }
+
+        // Calculate listening percentage and update the group's data
+        if (playcount > 0) {
+            const listeningPercentage = (scrobbles / playcount) * 100;
+            acc[key].listeningPercentage = listeningPercentage;
+        }
+
+        acc[key].scrobbles += scrobbles;
+        acc[key].playcount += playcount;
+
+        return acc;
+    }, {});
+
+    // Convert the grouped data into an array for returning
+    const result = Object.values(groups);
+
+    // Sort by listening percentage in descending order
+    result.sort((a, b) => b.listeningPercentage - a.listeningPercentage);
+
+    console.log('Listening percentage groups:', result);
+    return result;
+}
+
+/**
+ * Calculate listening duration for each entity (track/album/artist).
+ * @param {Array} filteredData - Array of track objects after filtering.
+ * @param {string} entityType - Grouping level: 'track', 'album', or 'artist'.
+ * @returns {Array} - Array of grouped objects with listening durations.
+ */
+function calculateListeningDuration(filteredData, entityType = 'track') {
+    console.log(`Calculating listening duration for entityType: ${entityType}`);
+
+    // Step 1: Group tracks by Artist + Track
+    const trackGroups = {};
+
+    filteredData.forEach(track => {
+        const key = `${track.Artist.toLowerCase()} - ${track.Track.toLowerCase()}`;
+        
+        if (!trackGroups[key]) {
+            trackGroups[key] = { ...track, count: 0, albumCounts: {}, duration: 0 };
+        }
+        trackGroups[key].count++;
+
+        // Count album occurrences to get the most common album for the track
+        const albumName = track.Album;
+        if (!trackGroups[key].albumCounts[albumName]) {
+            trackGroups[key].albumCounts[albumName] = 0;
+        }
+        trackGroups[key].albumCounts[albumName]++;
+
+        // Get the duration of the track from trackDataMap
+        trackGroups[key].duration = trackDataMap[`${track.Track.toLowerCase()}||${track.Artist.toLowerCase()}`]?.duration || 0;
+    });
+
+    // Convert the grouped data into an array
+    filteredData = Object.values(trackGroups);
+
+    // Step 2: If entityType is 'track', return the listening duration for tracks
+    if (entityType === 'track') {
+        return filteredData.map(track => {
+            return {
+                ...track,
+                listeningDuration: track.duration * track.count
+            };
+        }).sort((a, b) => b.listeningDuration - a.listeningDuration); // Sort by listeningDuration
+    }
+
+    // Step 3: Aggregate by artist or album
+    const aggregatedData = filteredData.reduce((acc, track) => {
+        const entityKey = entityType === 'album' ? track.Album : track.Artist; // Use Album for album-type, Artist otherwise
+    
+        // Ensure that the key is consistent and add artist for albums
+        if (!acc[entityKey]) {
+            acc[entityKey] = { 
+                listeningDuration: 0, 
+                name: entityKey, 
+                artist: entityType === 'album' ? track.Artist : null // Only add artist for albums
+            };
+        }
+    
+        // Add the track's listening duration to the entity's total listening duration
+        acc[entityKey].listeningDuration += track.duration * track.count;
+    
+        return acc;
+    }, {});
+
+    // Convert aggregated data into an array and sort by listeningDuration
+    const sortedAggregatedData = Object.values(aggregatedData).sort((a, b) => b.listeningDuration - a.listeningDuration);
+
+    console.log('Aggregated listening durations:', sortedAggregatedData);
+    return sortedAggregatedData;
+}
+
+/**
+ * Format the duration from milliseconds into a readable string: "x days y hours z minutes".
+ * @param {number} durationInMillis - Duration in milliseconds.
+ * @returns {string} - Formatted duration string.
+ */
+function formatDuration(durationInMillis) {
+    const days = Math.floor(durationInMillis / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((durationInMillis % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((durationInMillis % (1000 * 60 * 60)) / (1000 * 60));
+
+    let result = '';
+    if (days > 0) result += `${days} day${days > 1 ? 's' : ''} `;
+    if (hours > 0) result += `${hours} hour${hours > 1 ? 's' : ''} `;
+    if (minutes > 0) result += `${minutes} minute${minutes > 1 ? 's' : ''}`;
+
+    return result.trim();
 }
 
 function displayTopTracks(tracks) {
@@ -1369,7 +1648,6 @@ function displayTopArtists(artists) {
     });
 }
 
-
 function getAdditionalInfo(sortingBasis, entity) {
 	if (sortingBasis === 'separate-days') {
 		return `Different days: ${entity.count}`;
@@ -1382,7 +1660,11 @@ function getAdditionalInfo(sortingBasis, entity) {
 		const endDate = entity.endTime ? new Date(parseInt(entity.endTime)).toISOString().split('T')[0] : 'N/A';
 		let periodLabel = sortingBasis.replace('consecutive-', '').replace('-', ' ');
 		return `Max consecutive ${periodLabel}: ${entity.maxConsecutive}<br>Start: ${startDate}<br>End: ${endDate}`;
-	} else {
+	} else if (sortingBasis === 'highest-listening-percentage') {
+        return `Listening %: ${entity.listeningPercentage.toFixed(2)}%<br>Scrobbles: ${entity.scrobbles}<br>Playcount: ${entity.playcount}`;
+    } else if (sortingBasis === 'time-spent-listening') {
+        return `Listening time: ${formatDuration(entity.listeningDuration)}`;
+    } else {
 		return `Scrobbles: ${entity.count}`;
 	}
 }
@@ -1393,351 +1675,388 @@ function getWeekNumber(date) {
     return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
 }
 
-/**
- * Checks if the artist's tag array matches the filter input.
- * 
- * - If the input string contains a semicolon, it is split into groups.
- *   Each group is then split by comma. The artist is a match if it has
- *   all tags from at least one of those groups (AND logic per group).
- * 
- * - If the input string does NOT contain a semicolon, it is split by comma
- *   and the artist is a match if it has at least one of those tags (OR logic).
- *
- * @param {string} filterInput - The string from the input field.
- * @param {Array<string>} artistTags - The array of tags for the artist (all lowercased).
- * @return {boolean} True if the artist matches the filter, false otherwise.
- */
-function matchTags(filterInput, artistTags) {
-    // Normalize the filter input to lower case
-    const normalize = (str) => str.trim().toLowerCase().replace(/-/g, ''); // normalize by lowercasing and removing hyphens
-    const normalizedArtistTags = artistTags.map(normalize);
+function normalizeText(str) {
+    // Lowercase, trim, and remove hyphens for a more forgiving comparison.
+    return str.trim().toLowerCase().replace(/-/g, '');
+}
+  
+  /**
+   * Returns true if the propertyValue (a string) contains the tokens specified
+   * in filterInput according to the following logic:
+   * - If filterInput is empty, returns true.
+   * - If filterInput contains semicolons, each semicolon-separated group must have at least one token (after splitting by commas) that is found within propertyValue.
+   * - If filterInput does not contain semicolons, returns true if any of the comma-separated tokens are found.
+   */
+  function matchFilter(filterInput, propertyValue) {
+    // Ensure propertyValue is a string (convert arrays to a single string)
+    const normalizedProp = Array.isArray(propertyValue) 
+        ? propertyValue.map(normalizeText).join(" ")  // Convert array to a single string
+        : normalizeText(propertyValue);
 
     const input = filterInput.trim().toLowerCase();
-    if (!input) return true; // If empty, consider it a match
+    if (!input) return true; // empty filter passes
 
     if (input.indexOf(';') !== -1) {
-        // Split by semicolon to get separate groups (AND logic)
+        // Split into groups (AND logic across groups)
         const groups = input.split(';').map(group =>
-            group.split(',').map(tag => normalize(tag)).filter(tag => tag !== '')
+            group.split(',').map(tag => normalizeText(tag)).filter(tag => tag !== '')
         );
-
-        // Check that each group has at least one match (OR logic inside each group)
-        return groups.every(group => group.some(tag => normalizedArtistTags.includes(tag)));
+        // For each group, at least one token must be found in the property.
+        return groups.every(group => group.some(token => normalizedProp.includes(token)));
     } else {
-        // If no semicolon, just use OR logic for comma-separated tags
-        const tags = input.split(',').map(tag => normalize(tag)).filter(tag => tag !== '');
-        return tags.some(tag => normalizedArtistTags.includes(tag));
+        // Comma-separated tokens: OR logic
+        const tokens = input.split(',').map(token => normalizeText(token)).filter(token => token !== '');
+        return tokens.some(token => normalizedProp.includes(token));
     }
+}
+  
+  /**
+   * For excludes, we simply invert the result of matchFilter.
+   */
+function matchExclude(filterInput, propertyValue) {
+    return !matchFilter(filterInput, propertyValue);
+}
+  
+function getSelectedValues(selectElementId) {
+    const select = document.getElementById(selectElementId);
+    return Array.from(select.selectedOptions).map(option => option.value);
+}
+
+function addFilter(id, value) {
+    if (value.trim() === "") {
+        removeFilter(id);
+        return;
+    }
+    const existingFilter = activeFilters.find(filter => filter.id === id);
+    if (existingFilter) {
+        existingFilter.value = value;
+    } else {
+        activeFilters.push({ id, value });
+    }
+}
+
+function removeFilter(id) {
+    const index = activeFilters.findIndex(filter => filter.id === id);
+    if (index !== -1) {
+        activeFilters.splice(index, 1);
+    }
+}
+
+function applyTracksPerEntityFilter(tracks, maxArtist) {
+
+    // To track how many tracks we have included from each album and artist
+    let artistCount = {};
+
+    // Result list for the filtered tracks
+    let filteredTracks = [];
+
+    // Loop through the sorted tracks
+    for (let track of tracks) {
+        let artist = track.Artist;
+
+        // Check if we've already added a track from this album or artist
+        if (maxArtist && artistCount[artist] >= maxArtist) {
+            continue; // Skip if the album or artist has reached its limit
+        }
+
+        // Add the track to the result list
+        filteredTracks.push(track);
+
+        // Increment the counts for the album and artist
+        artistCount[artist] = (artistCount[artist] || 0) + 1;
+    }
+
+    return filteredTracks;
 }
 
 function applyFilters() {
-    // Retrieve new controls:
-    const sortingBasis = document.getElementById("sorting-basis").value; // e.g., "scrobbles"
-    const entityType = document.getElementById("entity-type").value;       // "track", "album", or "artist"
-    const listLength = parseInt(document.getElementById("list-length").value) || Infinity;
+    if (!allTracks) return;
+    let filteredData = allTracks;
+    const entityType = document.getElementById("entity-type").value;
+    const sortingBasis = document.getElementById("sorting-basis").value;
+    const maxPerArtist = parseInt(document.getElementById("max-per-artist").value) || Infinity;
 
-    // Retrieve other filter values (converting to lower case when applicable)
-    const artistName = document.getElementById("artist-name").value.toLowerCase().trim();
-    const artistInitial = document.getElementById("artist-initial").value.toLowerCase().trim();
-    const artistIncludes = document.getElementById("artist-includes").value.toLowerCase().split(",").map(s => s.trim()).filter(Boolean);
-    const artistExcludes = document.getElementById("artist-excludes").value.toLowerCase().split(",").map(s => s.trim()).filter(Boolean);
+    const filterFunctions = {
 
-    const albumName = document.getElementById("album-name").value.toLowerCase().trim();
-    const albumInitial = document.getElementById("album-initial").value.toLowerCase().trim();
-    const albumIncludes = document.getElementById("album-includes").value.toLowerCase().split(",").map(s => s.trim()).filter(Boolean);
-    const albumExcludes = document.getElementById("album-excludes").value.toLowerCase().split(",").map(s => s.trim()).filter(Boolean);
+        // Filters based on name or title
 
-    const trackName = document.getElementById("track-name").value.toLowerCase().trim();
-    const trackInitial = document.getElementById("track-initial").value.toLowerCase().trim();
-    const trackIncludes = document.getElementById("track-includes").value.toLowerCase().split(",").map(s => s.trim()).filter(Boolean);
-    const trackExcludes = document.getElementById("track-excludes").value.toLowerCase().split(",").map(s => s.trim()).filter(Boolean);
+        "artist-initial": (item, value) => item.Artist[0].toLowerCase() === value.toLowerCase(),
+        "album-initial": (item, value) => item.Album[0].toLowerCase() === value.toLowerCase(),
+        "track-initial": (item, value) => item.Track[0].toLowerCase() === value.toLowerCase(),
 
-    // Time filters:
-    const yearInput = document.getElementById("year").value.trim();
-    const selectedYears = yearInput.length > 0 
-        ? yearInput.split(',').map(y => parseInt(y.trim(), 10)).filter(num => !isNaN(num))
-        : [];
-    const month = Array.from(document.getElementById("month").selectedOptions).map(option => parseInt(option.value));
-    const dayInput = document.getElementById("day-of-month").value.trim();
-    const selectedDays = dayInput.length > 0 
-        ? dayInput.split(',').map(d => parseInt(d.trim(), 10)).filter(num => !isNaN(num))
-        : [];
-    const weekday = Array.from(document.getElementById("weekday").selectedOptions)
-                     .map(option => parseInt(option.value, 10));
-    const lastNDays = parseInt(document.getElementById("last-n-days").value) || 0;
+        "artist-name": (item, value) => item.Artist.toLowerCase() === value.toLowerCase(),
+        "album-name": (item, value) => item.Album.toLowerCase() === value.toLowerCase(),
+        "track-name": (item, value) => item.Track.toLowerCase() === value.toLowerCase(),
 
-    // Name length filters:
-    const artistNameLengthMin = parseInt(document.getElementById("artist-name-length-min").value) || 0;
-    const artistNameLengthMax = parseInt(document.getElementById("artist-name-length-max").value) || Infinity;
-    const albumNameLengthMin = parseInt(document.getElementById("album-name-length-min").value) || 0;
-    const albumNameLengthMax = parseInt(document.getElementById("album-name-length-max").value) || Infinity;
-    const trackNameLengthMin = parseInt(document.getElementById("track-name-length-min").value) || 0;
-    const trackNameLengthMax = parseInt(document.getElementById("track-name-length-max").value) || Infinity;
+        "artist-includes": (item, value) => matchFilter(value, item.Artist),
+        "artist-excludes": (item, value) => matchExclude(value, item.Artist),
+        "album-includes": (item, value) => matchFilter(value, item.Album),
+        "album-excludes": (item, value) => matchExclude(value, item.Album),
+        "track-includes": (item, value) => matchFilter(value, item.Track),
+        "track-excludes": (item, value) => matchExclude(value, item.Track),
 
-    // Global stats filters:
-    const artistListenersMin = parseInt(document.getElementById("artist-listeners-min").value) || 0;
-    const artistListenersMax = parseInt(document.getElementById("artist-listeners-max").value) || Infinity;
-    const artistScrobblesMin = parseInt(document.getElementById("artist-scrobbles-min").value) || 0;
-    const artistScrobblesMax = parseInt(document.getElementById("artist-scrobbles-max").value) || Infinity;
+        "artist-name-length-min": (item, value) => item.Artist.length >= parseInt(value, 10),
+        "artist-name-length-max": (item, value) => item.Artist.length <= parseInt(value, 10),
+        "album-name-length-min": (item, value) => item.Album.length >= parseInt(value, 10),
+        "album-name-length-max": (item, value) => item.Album.length <= parseInt(value, 10),
+        "track-name-length-min": (item, value) => item.Track.length >= parseInt(value, 10),
+        "track-name-length-max": (item, value) => item.Track.length <= parseInt(value, 10),
+       
+        "artist-word-count-min": (item, value) => item.Artist.split(/\s+/).length >= parseInt(value, 10),
+        "artist-word-count-max": (item, value) => item.Artist.split(/\s+/).length <= parseInt(value, 10),
+        "album-word-count-min": (item, value) => item.Album.split(/\s+/).length >= parseInt(value, 10),
+        "album-word-count-max": (item, value) => item.Album.split(/\s+/).length <= parseInt(value, 10),
+        "track-word-count-min": (item, value) => item.Track.split(/\s+/).length >= parseInt(value, 10),
+        "track-word-count-max": (item, value) => item.Track.split(/\s+/).length <= parseInt(value, 10),
 
-    const albumListenersMin = parseInt(document.getElementById("album-listeners-min").value) || 0;
-    const albumListenersMax = parseInt(document.getElementById("album-listeners-max").value) || Infinity;
-    const albumScrobblesMin = parseInt(document.getElementById("album-scrobbles-min").value) || 0;
-    const albumScrobblesMax = parseInt(document.getElementById("album-scrobbles-max").value) || Infinity;
+        // Filters based on user data
 
-    const trackListenersMin = parseInt(document.getElementById("track-listeners-min").value) || 0;
-    const trackListenersMax = parseInt(document.getElementById("track-listeners-max").value) || Infinity;
-    const trackScrobblesMin = parseInt(document.getElementById("track-scrobbles-min").value) || 0;
-    const trackScrobblesMax = parseInt(document.getElementById("track-scrobbles-max").value) || Infinity;
-    const trackDurationMin = (parseInt(document.getElementById("track-duration-min").value, 10) || 0) * 1000;
-    const trackDurationMax = (parseInt(document.getElementById("track-duration-max").value, 10) || Infinity) * 1000;
+        "artist-scrobble-count-min": (item, value) => 
+            artistDataMap[item.Artist.toLowerCase()]?.user_scrobbles >= parseInt(value, 10),
+        "artist-scrobble-count-max": (item, value) =>
+            artistDataMap[item.Artist.toLowerCase()]?.user_scrobbles <= parseInt(value, 10),
+        "album-scrobble-count-min": (item, value) =>
+            albumDataMap[`${item.Album.toLowerCase()}||${item.Artist.toLowerCase()}`]?.user_scrobbles >= parseInt(value, 10),
+        "album-scrobble-count-max": (item, value) =>
+            albumDataMap[`${item.Album.toLowerCase()}||${item.Artist.toLowerCase()}`]?.user_scrobbles <= parseInt(value, 10),
+        "track-scrobble-count-min": (item, value) =>
+            trackDataMap[`${item.Track.toLowerCase()}||${item.Artist.toLowerCase()}`]?.user_scrobbles >= parseInt(value, 10),
+        "track-scrobble-count-max": (item, value) =>
+            trackDataMap[`${item.Track.toLowerCase()}||${item.Artist.toLowerCase()}`]?.user_scrobbles <= parseInt(value, 10),
+        
+        "artist-rank-min": (item, value) => 
+            artistDataMap[item.Artist.toLowerCase()]?.rank >= parseInt(value, 10),
 
-    // User scrobble filters:
-    const artistScrobbleCountMin = parseInt(document.getElementById("artist-scrobble-count-min").value) || 0;
-    const artistScrobbleCountMax = parseInt(document.getElementById("artist-scrobble-count-max").value) || Infinity;
-    const albumScrobbleCountMin = parseInt(document.getElementById("album-scrobble-count-min").value) || 0;
-    const albumScrobbleCountMax = parseInt(document.getElementById("album-scrobble-count-max").value) || Infinity;
-    const trackScrobbleCountMin = parseInt(document.getElementById("track-scrobble-count-min").value) || 0;
-    const trackScrobbleCountMax = parseInt(document.getElementById("track-scrobble-count-max").value) || Infinity;
+        "artist-rank-max": (item, value) => 
+            artistDataMap[item.Artist.toLowerCase()]?.rank <= parseInt(value, 10),
 
-    // Ranking filters:
-    const artistRankMin = parseInt(document.getElementById("artist-rank-min").value) || 0;
-    const artistRankMax = parseInt(document.getElementById("artist-rank-max").value) || Infinity;
-    const albumRankMin = parseInt(document.getElementById("album-rank-min").value) || 0;
-    const albumRankMax = parseInt(document.getElementById("album-rank-max").value) || Infinity;
-    const trackRankMin = parseInt(document.getElementById("track-rank-min").value) || 0;
-    const trackRankMax = parseInt(document.getElementById("track-rank-max").value) || Infinity;
+        "album-rank-min": (item, value) => 
+            albumDataMap[`${item.Album.toLowerCase()}||${item.Artist.toLowerCase()}`]?.rank >= parseInt(value, 10),
 
-    // Word count filters (for names; count words as number of spaces + 1)
-    const artistWordCountMin = parseInt(document.getElementById("artist-word-count-min").value) || 0;
-    const artistWordCountMax = parseInt(document.getElementById("artist-word-count-max").value) || Infinity;
-    const albumWordCountMin = parseInt(document.getElementById("album-word-count-min").value) || 0;
-    const albumWordCountMax = parseInt(document.getElementById("album-word-count-max").value) || Infinity;
-    const trackWordCountMin = parseInt(document.getElementById("track-word-count-min").value) || 0;
-    const trackWordCountMax = parseInt(document.getElementById("track-word-count-max").value) || Infinity;
+        "album-rank-max": (item, value) => 
+            albumDataMap[`${item.Album.toLowerCase()}||${item.Artist.toLowerCase()}`]?.rank <= parseInt(value, 10),
 
-    const getFirstScrobbleYears = (id) => {
-        const rawInput = document.getElementById(id).value.trim();
+        "track-rank-min": (item, value) => 
+            trackDataMap[`${item.Track.toLowerCase()}||${item.Artist.toLowerCase()}`]?.rank >= parseInt(value, 10),
+
+        "track-rank-max": (item, value) => 
+            trackDataMap[`${item.Track.toLowerCase()}||${item.Artist.toLowerCase()}`]?.rank <= parseInt(value, 10),
+
+        "artist-track-count-min": (item, value) => 
+            artistDataMap[item.Artist.toLowerCase()]?.track_count >= parseInt(value, 10),
+
+        "artist-track-count-max": (item, value) => 
+            artistDataMap[item.Artist.toLowerCase()]?.track_count <= parseInt(value, 10),
+
+        "album-track-count-min": (item, value) => 
+            albumDataMap[`${item.Album.toLowerCase()}||${item.Artist.toLowerCase()}`]?.track_count >= parseInt(value, 10),
+
+        "album-track-count-max": (item, value) => 
+            albumDataMap[`${item.Album.toLowerCase()}||${item.Artist.toLowerCase()}`]?.track_count <= parseInt(value, 10),
+
+        "artist-first-scrobble-years": (item, value) => {
+            const firstYear = artistDataMap[item.Artist.toLowerCase()]?.firstscrobble 
+                ? new Date(parseInt(artistDataMap[item.Artist.toLowerCase()].firstscrobble, 10)).getFullYear() 
+                : null;
+            return firstYear && value.split(",").map(v => parseInt(v.trim(), 10)).includes(firstYear);
+        },
+        "album-first-scrobble-years": (item, value) => {
+            const firstYear = albumDataMap[`${item.Album.toLowerCase()}||${item.Artist.toLowerCase()}`]?.firstscrobble
+                ? new Date(parseInt(albumDataMap[`${item.Album.toLowerCase()}||${item.Artist.toLowerCase()}`].firstscrobble, 10)).getFullYear()
+                : null;
+            return firstYear && value.split(",").map(v => parseInt(v.trim(), 10)).includes(firstYear);
+        },
+        "track-first-scrobble-years": (item, value) => {
+            const firstYear = trackDataMap[`${item.Track.toLowerCase()}||${item.Artist.toLowerCase()}`]?.firstscrobble
+                ? new Date(parseInt(trackDataMap[`${item.Track.toLowerCase()}||${item.Artist.toLowerCase()}`].firstscrobble, 10)).getFullYear()
+                : null;
+            return firstYear && value.split(",").map(v => parseInt(v.trim(), 10)).includes(firstYear);
+        },
+
+        // Filters based on detailed data
+
+        "artist-listeners-min": (item, value) => artistDataMap[item.Artist.toLowerCase()]?.listeners >= parseInt(value, 10),
+        "artist-listeners-max": (item, value) => artistDataMap[item.Artist.toLowerCase()]?.listeners <= parseInt(value, 10),
+        "artist-global-scrobbles-min": (item, value) => artistDataMap[item.Artist.toLowerCase()]?.playcount >= parseInt(value, 10),
+        "artist-global-scrobbles-max": (item, value) => artistDataMap[item.Artist.toLowerCase()]?.playcount <= parseInt(value, 10),
     
-        const parsedYears = rawInput.split(",")
-            .map(year => parseInt(year.trim(), 10))
-            .filter(Number.isInteger);
+        "album-listeners-min": (item, value) => albumDataMap[`${item.Album.toLowerCase()}||${item.Artist.toLowerCase()}`]?.listeners >= parseInt(value, 10),
+        "album-listeners-max": (item, value) => albumDataMap[`${item.Album.toLowerCase()}||${item.Artist.toLowerCase()}`]?.listeners <= parseInt(value, 10),
+        "album-global-scrobbles-min": (item, value) => albumDataMap[`${item.Album.toLowerCase()}||${item.Artist.toLowerCase()}`]?.playcount >= parseInt(value, 10),
+        "album-global-scrobbles-max": (item, value) => albumDataMap[`${item.Album.toLowerCase()}||${item.Artist.toLowerCase()}`]?.playcount <= parseInt(value, 10),
     
-        return parsedYears;
+        "track-listeners-min": (item, value) => trackDataMap[`${item.Track.toLowerCase()}||${item.Artist.toLowerCase()}`]?.listeners >= parseInt(value, 10),
+        "track-listeners-max": (item, value) => trackDataMap[`${item.Track.toLowerCase()}||${item.Artist.toLowerCase()}`]?.listeners <= parseInt(value, 10),
+        "track-global-scrobbles-min": (item, value) => trackDataMap[`${item.Track.toLowerCase()}||${item.Artist.toLowerCase()}`]?.playcount >= parseInt(value, 10),
+        "track-global-scrobbles-max": (item, value) => trackDataMap[`${item.Track.toLowerCase()}||${item.Artist.toLowerCase()}`]?.playcount <= parseInt(value, 10),
+    
+        "track-duration-min": (item, value) => trackDataMap[`${item.Track.toLowerCase()}||${item.Artist.toLowerCase()}`]?.duration / 1000 >= parseInt(value, 10),
+        "track-duration-max": (item, value) => trackDataMap[`${item.Track.toLowerCase()}||${item.Artist.toLowerCase()}`]?.duration / 1000 <= parseInt(value, 10),
+
+        "artist-tags": (item, value) => {
+            const detailedArtist = artistDataMap[item.Artist.toLowerCase()];
+            if (!detailedArtist) return false;  // or true if you want to ignore missing details
+            return matchFilter(value, detailedArtist.tags || []);
+            },
+
+        // Time-based filters
+
+        "year": (item, value) => {
+            if (!item.Date || isNaN(item.Date)) return false;
+            const selectedYears = value.split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+            const date = new Date(parseInt(item.Date, 10));
+            return selectedYears.length === 0 || selectedYears.includes(date.getFullYear());
+        },
+    
+        "month": (item, value) => {
+            if (!item.Date || isNaN(item.Date)) return false;
+            const selectedMonths = getSelectedValues("month").map(Number);
+            const month = new Date(parseInt(item.Date, 10)).getMonth() + 1;
+            return selectedMonths.length === 0 || selectedMonths.includes(month);
+        },
+    
+        "day-of-month": (item, value) => {
+            if (!item.Date || isNaN(item.Date)) return false;
+            const selectedDays = value.split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+            const day = new Date(parseInt(item.Date, 10)).getDate();
+            return selectedDays.length === 0 || selectedDays.includes(day);
+        },
+    
+        "weekday": (item, value) => {
+            if (!item.Date || isNaN(item.Date)) return false;
+            const selectedWeekdays = getSelectedValues("weekday").map(Number);
+            const weekday = new Date(parseInt(item.Date, 10)).getDay();
+            return selectedWeekdays.length === 0 || selectedWeekdays.includes(weekday);
+        },
+
+        "last-n-days": (item, value) => {
+            const now = Date.now();
+            return now - parseInt(item.Date) <= value * 86400000;
+        },
+
+        "date-range-start": (item, value) => {
+            const startTime = new Date(value).getTime();
+            return item.Date >= startTime;
+        },
+        "date-range-end": (item, value) => {
+            const endTime = new Date(value).getTime() + 86400000; // Include the whole day
+            return item.Date < endTime;
+        },
+
+        "scrobble-order-from": (item, value) => item.order >= parseInt(value, 10),
+        "scrobble-order-to": (item, value) => item.order <= parseInt(value, 10)
     };
-    
-    const artistFirstScrobbleYears = getFirstScrobbleYears("artist-first-scrobble-years");
-    const albumFirstScrobbleYears = getFirstScrobbleYears("album-first-scrobble-years");
-    const trackFirstScrobbleYears = getFirstScrobbleYears("track-first-scrobble-years");
 
-    const genreCountryInput = document.getElementById("artist-genre-country").value;
-
-    // Helper functions:
-    const includesAny = (text, words) => words.length === 0 || words.some(word => text.includes(word));
-    const excludesAll = (text, words) => words.length === 0 || words.every(word => !text.includes(word));
-
-    // Calculate word count by splitting on whitespace.
-    const wordCount = text => 
-        text.split(/\s+/).filter(word => word && word !== "-").length;    
-
-    // Function to apply time filters on a Date object.
-    const dateMatches = (date) => {
-        const yearMatches = selectedYears.length === 0 || selectedYears.includes(date.getFullYear());
-        const monthMatches = month.length === 0 || month.includes(date.getMonth() + 1);
-        const dayOfMonthMatches = selectedDays.length === 0 || selectedDays.includes(date.getDate());
-        const weekdayMatches = weekday.length === 0 || weekday.includes(date.getDay());
-        const lastNDaysMatches = !lastNDays || date.getTime() >= (Date.now() - lastNDays * 24 * 60 * 60 * 1000);
-
-        return yearMatches && monthMatches && dayOfMonthMatches && weekdayMatches && lastNDaysMatches;
-    };
-
-    // ---- 1. Filter tracks from allTracks (track-level filtering) ----
-    const filteredTracks = allTracks.filter(track => {
-
-        const artist = track.Artist.toLowerCase();
-        const album = track.Album.toLowerCase();
-        const trackTitle = track.Track.toLowerCase();
-
-        // Look up detailed stats from global arrays:
-        const trackData = tracksData.find(t =>
-            t && t.name && t.name.toLowerCase() === trackTitle &&
-            t.artist && t.artist.toLowerCase() === artist
-        );
-        const artistData = artistsData.find(a => 
-            a && a.name && a.name.toLowerCase() === artist
-        );
-        const albumData = albumsData.find(a => 
-            a && a.name && a.name.toLowerCase() === album &&
-            a.artist && a.artist.toLowerCase() === artist
-        );
-
-        const artistMatch = (!artistName || artist === artistName.toLowerCase()) &&
-                            (!artistInitial || artist.startsWith(artistInitial.toLowerCase())) &&
-                            includesAny(artist, artistIncludes) &&
-                            excludesAll(artist, artistExcludes) &&
-                            (artist.length >= artistNameLengthMin && artist.length <= artistNameLengthMax) &&
-                            (artistData?.listeners ?? 0) >= artistListenersMin &&
-                            (artistData?.listeners ?? 0) <= artistListenersMax &&
-                            (artistData?.playcount ?? 0) >= artistScrobblesMin &&
-                            (artistData?.playcount ?? 0) <= artistScrobblesMax &&
-                            wordCount(track.Artist) >= artistWordCountMin &&
-                            wordCount(track.Artist) <= artistWordCountMax &&
-                            (artistScrobbleCountMin === 0 || (artistData && artistData.user_scrobbles >= artistScrobbleCountMin)) &&
-                            (artistScrobbleCountMax === Infinity || (artistData && artistData.user_scrobbles <= artistScrobbleCountMax)) &&
-                            (artistRankMin === 0 || (artistData && artistData.rank >= artistRankMin)) &&
-                            (artistRankMax === Infinity || (artistData && artistData.rank <= artistRankMax)) &&
-                            (artistFirstScrobbleYears.length === 0 || 
-                                (artistData?.firstscrobble && artistFirstScrobbleYears.includes(new Date(artistData.firstscrobble).getUTCFullYear()))) &&
-                            (!genreCountryInput || (artistData && matchTags(genreCountryInput, artistData.tags || [])));
-                    
-
-        const albumMatch = (!albumName || album === albumName.toLowerCase()) &&
-                           (!albumInitial || album.startsWith(albumInitial.toLowerCase())) &&
-                           includesAny(album, albumIncludes) &&
-                           excludesAll(album, albumExcludes) &&
-                           (album.length >= albumNameLengthMin && album.length <= albumNameLengthMax) &&
-                           (albumData?.listeners ?? 0) >= albumListenersMin &&
-                           (albumData?.listeners ?? 0) <= albumListenersMax &&
-                           (albumData?.playcount ?? 0) >= albumScrobblesMin &&
-                           (albumData?.playcount ?? 0) <= albumScrobblesMax &&
-                            wordCount(track.Album) >= albumWordCountMin &&
-                            wordCount(track.Album) <= albumWordCountMax &&
-                            // (artist === albumData?.artist.toLowerCase()) &&
-                            ((albumScrobbleCountMin === 0 || (albumData?.user_scrobbles ?? 0) >= albumScrobbleCountMin) &&
-                             (albumScrobbleCountMax === Infinity || (albumData?.user_scrobbles ?? 0) <= albumScrobbleCountMax)) &&
-                             (albumScrobbleCountMin === 0 || (trackData && trackData.user_scrobbles >= albumScrobbleCountMin)) &&
-                             (albumScrobbleCountMax === Infinity || (trackData && trackData.user_scrobbles <= albumScrobbleCountMax)) &&                             
-                            (albumRankMin === 0 || (albumData && albumData.rank >= albumRankMin)) &&
-                            (albumRankMax === Infinity || (albumData && albumData.rank <= albumRankMax)) &&
-                            (albumFirstScrobbleYears.length === 0 || 
-                                (albumData?.firstscrobble && albumFirstScrobbleYears.includes(new Date(albumData.firstscrobble).getUTCFullYear())))                            
-                            
-        const trackMatch = (!trackName || trackTitle === trackName.toLowerCase()) &&
-                           (!trackInitial || trackTitle.startsWith(trackInitial.toLowerCase())) &&
-                           includesAny(trackTitle, trackIncludes) &&
-                           excludesAll(trackTitle, trackExcludes) &&
-                           (trackTitle.length >= trackNameLengthMin && trackTitle.length <= trackNameLengthMax) &&
-                           (trackData?.listeners ?? 0) >= trackListenersMin &&
-                           (trackData?.listeners ?? 0) <= trackListenersMax &&
-                           (trackData?.playcount ?? 0) >= trackScrobblesMin &&
-                           (trackData?.playcount ?? 0) <= trackScrobblesMax &&
-                           (trackData?.duration ?? 0) >= trackDurationMin &&
-                           (trackData?.duration ?? 0) <= trackDurationMax &&
-                            wordCount(track.Track) >= trackWordCountMin &&
-                            wordCount(track.Track) <= trackWordCountMax &&
-                            (trackScrobbleCountMin === 0 || (trackData && trackData.user_scrobbles >= trackScrobbleCountMin)) &&
-                            (trackScrobbleCountMax === Infinity || (trackData && trackData.user_scrobbles <= trackScrobbleCountMax)) &&                            
-                            (trackRankMin === 0 || (trackData && trackData.rank >= trackRankMin)) &&
-                            (trackRankMax === Infinity || (trackData && trackData.rank <= trackRankMax)) &&
-                            (trackFirstScrobbleYears.length === 0 || 
-                                (trackData?.firstscrobble && trackFirstScrobbleYears.includes(new Date(trackData.firstscrobble).getUTCFullYear())))                            
-
-        const date = new Date(parseInt(track.Date));
-        const timeMatch = dateMatches(date);
-
-        return artistMatch && albumMatch && trackMatch && timeMatch;
+    activeFilters.forEach(filter => {
+        if (filterFunctions[filter.id]) {
+            filteredData = filteredData.filter(item => filterFunctions[filter.id](item, filter.value));
+        }
     });
 
-    // ---- 2. Group filtered tracks based on selected entity type ----
-let filteredItems = [];
-// Map the separate-X values to singular period values.
-const separateMapping = {
-    'separate-days': 'day',
-    'separate-weeks': 'week',
-    'separate-months': 'month'
-};
-
-if (separateMapping[sortingBasis]) {
-    const period = separateMapping[sortingBasis]; // maps 'separate-weeks' to 'week', etc.
-    filteredItems = calculateSeparateScrobbles(filteredTracks, period, entityType);
-    filteredItems.sort((a, b) => b.count - a.count);
-} else if (sortingBasis.startsWith('consecutive')) {
-    if (sortingBasis === 'consecutive-scrobbles') {
-        filteredItems = calculateConsecutiveScrobbles(filteredTracks, entityType);
-    } else {
-        // For consecutive-days/weeks/months, extract the period (e.g., 'days' -> 'day')
-        const parts = sortingBasis.split('-'); // e.g., ['consecutive', 'days']
-        // Optionally, map plural to singular (if your helper expects 'day', 'week', 'month'):
-        const periodMap = { 'days': 'day', 'weeks': 'week', 'months': 'month' };
-        const period = periodMap[parts[1]] || parts[1];
-        filteredItems = calculateConsecutivePeriods(filteredTracks, period, entityType);
+    if (sortingBasis === 'scrobbles') {
+        // Default grouping by scrobbles (using count aggregation)
+        if (entityType === 'track') {
+            const trackGroups = {};
+            filteredData.forEach(track => {
+                // Group by Artist + Track (ignoring album differences)
+                const key = `${track.Artist.toLowerCase()} - ${track.Track.toLowerCase()}`;
+                if (!trackGroups[key]) {
+                    trackGroups[key] = { ...track, count: 0, albumCounts: {} };
+                }
+                trackGroups[key].count++;
+                // Count album occurrences to show the most played album for the track.
+                const albumName = track.Album;
+                if (!trackGroups[key].albumCounts[albumName]) {
+                    trackGroups[key].albumCounts[albumName] = 0;
+                }
+                trackGroups[key].albumCounts[albumName]++;
+            });
+            filteredData = Object.values(trackGroups);
+        } else if (entityType === 'album') {
+            const albumGroups = {};
+            filteredData.forEach(track => {
+                // Group by Album + Artist
+                const key = `${track.Album.toLowerCase()}||${track.Artist.toLowerCase()}`;
+                if (!albumGroups[key]) {
+                    albumGroups[key] = { name: track.Album, artist: track.Artist, count: 0, tracks: [] };
+                }
+                albumGroups[key].count++;
+                albumGroups[key].tracks.push(track);
+            });
+            filteredData = Object.values(albumGroups);
+        } else if (entityType === 'artist') {
+            const artistGroups = {};
+            filteredData.forEach(track => {
+                // Group by Artist
+                const key = track.Artist.toLowerCase();
+                if (!artistGroups[key]) {
+                    artistGroups[key] = { name: track.Artist, count: 0, tracks: [] };
+                }
+                artistGroups[key].count++;
+                artistGroups[key].tracks.push(track);
+            });
+            filteredData = Object.values(artistGroups);
+        }
+        // For default grouping (scrobbles), sort by count descending.
+        filteredData.sort((a, b) => (b.count || 0) - (a.count || 0));
+    } else if (sortingBasis === 'separate-days') {
+        filteredData = calculateSeparateScrobbles(filteredData, 'day', entityType);
+        filteredData.sort((a, b) => b.count - a.count);
+    } else if (sortingBasis === 'separate-weeks') {
+        filteredData = calculateSeparateScrobbles(filteredData, 'week', entityType);
+        filteredData.sort((a, b) => b.count - a.count);
+    } else if (sortingBasis === 'separate-months') {
+        filteredData = calculateSeparateScrobbles(filteredData, 'month', entityType);
+        filteredData.sort((a, b) => b.count - a.count);
+    } else if (sortingBasis === 'consecutive-scrobbles') {
+        filteredData = calculateConsecutiveScrobbles(filteredData, entityType);
+        filteredData.sort((a, b) => b.maxConsecutive - a.maxConsecutive);
+    } else if (sortingBasis === 'consecutive-days') {
+        filteredData = calculateConsecutivePeriods(filteredData, 'day', entityType);
+        filteredData.sort((a, b) => b.maxConsecutive - a.maxConsecutive);
+    } else if (sortingBasis === 'consecutive-weeks') {
+        filteredData = calculateConsecutivePeriods(filteredData, 'week', entityType);
+        filteredData.sort((a, b) => b.maxConsecutive - a.maxConsecutive);
+    } else if (sortingBasis === 'consecutive-months') {
+        filteredData = calculateConsecutivePeriods(filteredData, 'month', entityType);
+        filteredData.sort((a, b) => b.maxConsecutive - a.maxConsecutive);
+    } else if (sortingBasis === 'highest-listening-percentage') {
+        filteredData = calculateListeningPercentage(filteredData, entityType);
+        filteredData.sort((a, b) => b.listeningPercentage - a.listeningPercentage);
+    } else if (sortingBasis === 'time-spent-listening') {
+        filteredData = calculateListeningDuration(filteredData, entityType);
+        filteredData.sort((a, b) => b.listeningDuration - a.listeningDuration);
     }
-    // Explicitly sort descending by maxConsecutive:
-    filteredItems.sort((a, b) => (b.maxConsecutive || 0) - (a.maxConsecutive || 0));
 
-} else {
-    // Default grouping by scrobbles (using count aggregation)
-    if (entityType === 'track') {
-        const trackGroups = {};
-        filteredTracks.forEach(track => {
-            // Group by Artist + Track (ignoring album differences)
-            const key = `${track.Artist.toLowerCase()} - ${track.Track.toLowerCase()}`;
-            if (!trackGroups[key]) {
-                trackGroups[key] = { ...track, count: 0, albumCounts: {} };
-            }
-            trackGroups[key].count++;
-            // Count album occurrences to show the most played album for the track.
-            const albumName = track.Album;
-            if (!trackGroups[key].albumCounts[albumName]) {
-                trackGroups[key].albumCounts[albumName] = 0;
-            }
-            trackGroups[key].albumCounts[albumName]++;
-        });
-        filteredItems = Object.values(trackGroups);
-    } else if (entityType === 'album') {
-        const albumGroups = {};
-        filteredTracks.forEach(track => {
-            // Group by Album + Artist
-            const key = `${track.Album.toLowerCase()}||${track.Artist.toLowerCase()}`;
-            if (!albumGroups[key]) {
-                albumGroups[key] = { name: track.Album, artist: track.Artist, count: 0, tracks: [] };
-            }
-            albumGroups[key].count++;
-            albumGroups[key].tracks.push(track);
-        });
-        filteredItems = Object.values(albumGroups);
-    } else if (entityType === 'artist') {
-        const artistGroups = {};
-        filteredTracks.forEach(track => {
-            // Group by Artist
-            const key = track.Artist.toLowerCase();
-            if (!artistGroups[key]) {
-                artistGroups[key] = { name: track.Artist, count: 0, tracks: [] };
-            }
-            artistGroups[key].count++;
-            artistGroups[key].tracks.push(track);
-        });
-        filteredItems = Object.values(artistGroups);
+    if (entityType === "track") {
+        // For example, limit to 1 track per artist:
+        filteredData = applyTracksPerEntityFilter(filteredData, maxPerArtist);
+        displayTopTracks(filteredData);
+    } else if (entityType === "album") {
+        displayTopAlbums(filteredData);
+    } else if (entityType === "artist") {
+        displayTopArtists(filteredData);
     }
-    // For default grouping (scrobbles), sort by count descending.
-    filteredItems.sort((a, b) => (b.count || 0) - (a.count || 0));
+
+    // Update the results header based on the selected entity type.
+    const resultsHeader = document.querySelector("#results-section h2");
+    if (entityType === "track") {
+    resultsHeader.textContent = "Top Tracks";
+    } else if (entityType === "album") {
+    resultsHeader.textContent = "Top Albums";
+    } else if (entityType === "artist") {
+    resultsHeader.textContent = "Top Artists";
+    }
+
+    updateActiveFilters();
 }
 
-// ---- 3. Limit results by list length ----
-filteredItems = filteredItems.slice(0, listLength);
-
-// ---- 4. Display the results based on entity type ----
-if (entityType === "track") {
-    displayTopTracks(filteredItems);
-} else if (entityType === "album") {
-    displayTopAlbums(filteredItems);
-} else if (entityType === "artist") {
-    displayTopArtists(filteredItems);
-}
-
-// Update the results header based on the selected entity type.
-const resultsHeader = document.querySelector("#results-section h2");
-if (entityType === "track") {
-  resultsHeader.textContent = "Top Tracks";
-} else if (entityType === "album") {
-  resultsHeader.textContent = "Top Albums";
-} else if (entityType === "artist") {
-  resultsHeader.textContent = "Top Artists";
-}
-
-updateActiveFilters(); // Update the active filters display
-}
-
+// Attach event listeners to filter inputs
+document.querySelectorAll(".filters").forEach(filter => {
+    filter.addEventListener("input", (event) => {
+        addFilter(event.target.id, event.target.value);
+    });
+});
 
 // Function to update the active filters display
 function updateActiveFilters() {
@@ -1745,74 +2064,106 @@ function updateActiveFilters() {
     activeFiltersDiv.innerHTML = ""; // Clear previous filters
 
     const filters = [
+
+        { id: "entity-type", label: "Entity type", isSelect: true },
+        { id: "sorting-basis", label: "Sorting basis", isSelect: true },
+
+        { id: "max-per-artist", label: "Max tracks per artist" },
+
+        // Artist filters
+
         { id: "artist-initial", label: "Artist initial" },
         { id: "artist-name", label: "Artist name" },
         { id: "artist-includes", label: "Artist name includes" },
         { id: "artist-excludes", label: "Artist name excludes" },
+        { id: "artist-name-length-min", label: "Artist name length (min)" },
+        { id: "artist-name-length-max", label: "Artist name length (max)" },
+        { id: "artist-word-count-min", label: "Artist word count (min)" },
+        { id: "artist-word-count-max", label: "Artist word count (max)" },
+
+        { id: "artist-scrobble-count-min", label: "Artist user scrobbles (min)" },
+        { id: "artist-scrobble-count-max", label: "Artist user scrobbles (max)" },
+        { id: "artist-rank-min", label: "Artist rank (min)" },
+        { id: "artist-rank-max", label: "Artist rank (max)" },
+        { id: "artist-track-count-min", label: "Artist track count (min)" },
+        { id: "artist-track-count-max", label: "Artist track count (max)" },
+        { id: "artist-first-scrobble-years", label: "Artist first scrobble years" },
+
+        { id: "artist-listeners-min", label: "Artist listeners (min)" },
+        { id: "artist-listeners-max", label: "Artist listeners (max)" },
+        { id: "artist-global-scrobbles-min", label: "Artist global scrobbles (min)" },
+        { id: "artist-global-scrobbles-max", label: "Artist global scrobbles (max)" },
+        { id: "artist-tags", label: "Artist tags" },
+
+        // Album filters
+
         { id: "album-initial", label: "Album initial" },
         { id: "album-name", label: "Album name" },
         { id: "album-includes", label: "Album name includes" },
-        { id: "album-excludes", label: "Album name excludes" },
+        { id: "album-excludes", label: "Album name excludes" },       
+        { id: "album-name-length-min", label: "Album name length (min)" },
+        { id: "album-name-length-max", label: "Album name length (max)" },
+        { id: "album-word-count-min", label: "Album word count (min)" },
+        { id: "album-word-count-max", label: "Album word count (max)" },
+
+        { id: "album-scrobble-count-min", label: "Album user scrobbles (min)" },
+        { id: "album-scrobble-count-max", label: "Album user scrobbles (max)" },
+        { id: "album-rank-min", label: "Album rank (min)" },
+        { id: "album-rank-max", label: "Album rank (max)" },
+        { id: "album-track-count-min", label: "Album track count (min)" },
+        { id: "album-track-count-max", label: "Album track count (max)" },
+        { id: "album-first-scrobble-years", label: "Album first scrobble years" },
+
+        { id: "album-listeners-min", label: "Album listeners (min)" },
+        { id: "album-listeners-max", label: "Album listeners (max)" },
+        { id: "album-global-scrobbles-min", label: "Album global scrobbles (min)" },
+        { id: "album-global-scrobbles-max", label: "Album global scrobbles (max)" },
+
+        // Track filters
+
         { id: "track-initial", label: "Track initial" },
         { id: "track-name", label: "Track title" },
         { id: "track-includes", label: "Track title includes" },
         { id: "track-excludes", label: "Track title excludes" },
+        { id: "track-name-length-min", label: "Track title length (min)" },
+        { id: "track-name-length-max", label: "Track title length (max)" },
+        { id: "track-word-count-min", label: "Track word count (min)" },
+        { id: "track-word-count-max", label: "Track word count (max)" },
+
+        { id: "track-scrobble-count-min", label: "Track user scrobbles (min)" },
+        { id: "track-scrobble-count-max", label: "Track user scrobbles (max)" },
+        { id: "track-rank-min", label: "Track rank (min)" },
+        { id: "track-rank-max", label: "Track rank (max)" },
+        { id: "track-first-scrobble-years", label: "Track first scrobble years" },
+
+        { id: "track-listeners-min", label: "Track listeners (min)" },
+        { id: "track-listeners-max", label: "Track listeners (max)" },
+        { id: "track-global-scrobbles-min", label: "Track global scrobbles (min)" },
+        { id: "track-global-scrobbles-max", label: "Track global scrobbles (max)" },
+        { id: "track-duration-min", label: "Track duration (min)" },
+        { id: "track-duration-max", label: "Track duration (max)" },
+
+        // Time filters
+
         { id: "year", label: "Year" },
         { id: "month", label: "Month", isSelect: true },
         { id: "day-of-month", label: "Day of month" },
         { id: "weekday", label: "Weekday", isSelect: true },
-        { id: "artist-name-length-min", label: "Artist name length (min)" },
-        { id: "artist-name-length-max", label: "Artist name length (max)" },
-        { id: "album-name-length-min", label: "Album name length (min)" },
-        { id: "album-name-length-max", label: "Album name length (max)" },
-        { id: "track-name-length-min", label: "Track title length (min)" },
-        { id: "track-name-length-max", label: "Track title length (max)" },
-        { id: "artist-listeners-min", label: "Artist listeners (min)" },
-        { id: "artist-listeners-max", label: "Artist global listeners (max)" },
-        { id: "artist-scrobbles-min", label: "Artist global scrobbles (min)" },
-        { id: "artist-scrobbles-max", label: "Artist scrobbles (max)" },
-        { id: "album-listeners-min", label: "Album listeners (min)" },
-        { id: "album-listeners-max", label: "Album listeners (max)" },
-        { id: "album-scrobbles-min", label: "Album global scrobbles (min)" },
-        { id: "album-scrobbles-max", label: "Album global scrobbles (max)" },
-        { id: "track-listeners-min", label: "Track listeners (min)" },
-        { id: "track-listeners-max", label: "Track listeners (max)" },
-        { id: "track-scrobbles-min", label: "Track global scrobbles (min)" },
-        { id: "track-scrobbles-max", label: "Track global scrobbles (max)" },
-        { id: "track-duration-min", label: "Track duration (min)" },
-        { id: "track-duration-max", label: "Track duration (max)" },
+        { id: "date-range-start", label: "Date range start" },
+        { id: "date-range-end", label: "Date range end" },
         { id: "last-n-days", label: "Last n days" },
-        { id: "artist-scrobble-count-min", label: "Artist user scrobbles (min)" },
-        { id: "artist-scrobble-count-max", label: "Artist user scrobbles (max)" },
-        { id: "album-scrobble-count-min", label: "Album user scrobbles (min)" },
-        { id: "album-scrobble-count-max", label: "Album user scrobbles (max)" },
-        { id: "track-scrobble-count-min", label: "Track user scrobbles (min)" },
-        { id: "track-scrobble-count-max", label: "Track user scrobbles (max)" },
-        { id: "artist-rank-min", label: "Artist rank (min)" },
-        { id: "artist-rank-max", label: "Artist rank (max)" },
-        { id: "album-rank-min", label: "Album rank (min)" },
-        { id: "album-rank-max", label: "Album rank (max)" },
-        { id: "track-rank-min", label: "Track rank (min)" },
-        { id: "track-rank-max", label: "Track rank (max)" },
-        { id: "artist-word-count-min", label: "Artist name word count (min)" },
-        { id: "artist-word-count-max", label: "Artist name word count (max)" },
-        { id: "album-word-count-min", label: "Album name word count (min)" },
-        { id: "album-word-count-max", label: "Album name word count (max)" },
-        { id: "track-word-count-min", label: "Track title word count (min)" },
-        { id: "track-word-count-max", label: "Track title word count (max)" },
-        { id: "artist-first-scrobble-years", label: "Artist first scrobble years" },
-        { id: "album-first-scrobble-years", label: "Album first scrobble years" },
-        { id: "track-first-scrobble-years", label: "Track first scrobble years" },
-        { id: "artist-genre-country", label: "Artist tags" }
+        { id: "scrobble-order-from", label: "Scrobble order (min)" },
+        { id: "scrobble-order-to", label: "Scrobble order (max)" }
     ];
 
     filters.forEach(filter => {
         const element = document.getElementById(filter.id);
+        if (!element) return; // Skip if element is not found
+        // If it's a select (multi-select), join the selected options; otherwise, take the value.
         let value = filter.isSelect 
             ? Array.from(element.selectedOptions).map(option => option.text).join(", ") 
-            : element.value; 
-    
-        if (value) {
+            : element.value;
+        if (value.trim() !== "") {
             const filterLabel = document.createElement("div");
             filterLabel.classList.add("filter-label");
             filterLabel.textContent = `${filter.label}: ${value}`;
@@ -1826,6 +2177,10 @@ function resetFilters() {
     document.querySelectorAll("#filters-section input, #filters-section select").forEach(element => {
         element.value = "";
     });
+    
+    // Clear the activeFilters array (using splice or reassigning an empty array)
+    activeFilters.length = 0;
+    
     // Set default values for sorting basis and entity type
     document.getElementById("sorting-basis").value = "scrobbles";
     document.getElementById("entity-type").value = "track";
@@ -1866,4 +2221,3 @@ document.addEventListener('click', function(event) {
         document.body.classList.remove('no-scroll');
     }
 });
-
