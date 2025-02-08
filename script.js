@@ -651,7 +651,7 @@ document.getElementById("username-form").addEventListener("submit", async (event
 		}
 
 		const artistKey = track.Artist.trim().toLowerCase();
-		const albumKey = track.Album?.trim() ? `${track.Album.trim().toLowerCase()}_${artistKey}` : null;
+		const albumKey = track.Album?.trim() ? `${track.Album.trim().toLowerCase()}||${artistKey}` : null;
 		const trackKey = `${track.Track.trim().toLowerCase()}_${artistKey}`;
 		const uts = parseInt(track.Date, 10); // Already in milliseconds
 
