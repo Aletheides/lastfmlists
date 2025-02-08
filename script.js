@@ -2221,3 +2221,28 @@ document.addEventListener('click', function(event) {
         document.body.classList.remove('no-scroll');
     }
 });
+
+document.addEventListener("DOMContentLoaded", () => {
+    document.querySelectorAll(".dropdown-button").forEach(button => {
+        button.addEventListener("click", (event) => {
+            event.stopPropagation(); // Prevent immediate closing when clicking the button
+            let dropdownContent = button.nextElementSibling;
+
+            // Close other dropdowns before opening the current one
+            document.querySelectorAll(".dropdown-content").forEach(menu => {
+                if (menu !== dropdownContent) menu.style.display = "none";
+            });
+
+            // Toggle the clicked dropdown
+            dropdownContent.style.display = dropdownContent.style.display === "block" ? "none" : "block";
+        });
+    });
+
+    // Close dropdowns when clicking outside
+    document.addEventListener("click", () => {
+        document.querySelectorAll(".dropdown-content").forEach(menu => {
+            menu.style.display = "none";
+        });
+    });
+});
+

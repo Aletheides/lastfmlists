@@ -54,11 +54,12 @@ header h1 {
 /* Main Content Styling */
 main {
     padding: 1.5rem;
-    max-width: 800px;
+    max-width: 1000px;
     margin: 0 auto;
     background-color: var(--background-color);
     color: var(--primary-text-color);
     font-family: "Roboto Flex", sans-serif;
+    font-size: medium;
     flex: 1;
 }
 
@@ -66,6 +67,7 @@ main {
     margin-bottom: 2rem;
     text-align: center;
     font-family: "Roboto Flex", sans-serif;
+    width: 100%
 }
 
 #input-section input {
@@ -267,7 +269,7 @@ button, .dropdown-button {
     font-family: 'Roboto Flex', sans-serif;
 }
 
-button:hover, .dropdown-button:hover {
+.dropdown.open .dropdown-button {
     background-color: var(--border-color);
 }
 
