@@ -87,7 +87,7 @@
                     <button class="dropdown-button">Artist</button>
                     <div class="dropdown-content">
 
-                        <label for="max-per-artist">Max tracks/artist:</label>
+                        <label for="max-per-artist">Displayed tracks per artist:</label>
                         <input type="number" id="max-per-artist" placeholder="e.g., 1" min="1">
 
                         <hr class="separator">
@@ -96,13 +96,13 @@
                         <label for="artist-name">Artist name:</label>
                         <input type="text" id="artist-name" placeholder="e.g., The Beatles">
                         
-                        <label for="artist-initial">Initial:</label>
+                        <label for="artist-initial">Artist initial:</label>
                         <input type="text" id="artist-initial" maxlength="1" placeholder="e.g., A">
                         
-                        <label for="artist-includes">Name includes:</label>
+                        <label for="artist-includes">Artist name includes:</label>
                         <input type="text" id="artist-includes" placeholder="e.g., The">
                         
-                        <label for="artist-excludes">Name doesn't include:</label>
+                        <label for="artist-excludes">Artist name excludes:</label>
                         <input type="text" id="artist-excludes" placeholder="e.g., Live">
                         
                         <div class="input-group">
@@ -125,7 +125,7 @@
                 
                         <!-- Category 2: User data filters -->
                         <div class="input-group">
-                            <label>Artist scrobbles (user) (min - max):</label>
+                            <label>Artist scrobbles (your data) (min - max):</label>
                             <div class="input-pair">
                                 <input type="number" id="artist-scrobble-count-min" placeholder="0" min="0">
                                 <input type="number" id="artist-scrobble-count-max" placeholder="∞" min="0">
@@ -133,7 +133,7 @@
                         </div>
 
                         <div class="input-group">
-                            <label>Artist rank (user) (top - bottom):</label>
+                            <label>Artist rank (your top artists) (from - to):</label>
                             <div class="input-pair">
                                 <input type="number" id="artist-rank-min" placeholder="0" min="0">
                                 <input type="number" id="artist-rank-max" placeholder="∞" min="0">
@@ -141,14 +141,14 @@
                         </div>
 
                         <div class="input-group">
-                            <label>Artist track count (min - max)</label>
+                            <label>Tracks scrobbled per artist (min - max)</label>
                             <div class="input-pair">
                                 <input type="number" id="artist-track-count-min" placeholder="0" min="0">
                                 <input type="number" id="artist-track-count-max" placeholder="∞" min="0">
                             </div>
                         </div>
 
-                        <label for="artist-first-scrobble-years">Year of first scrobble:</label>
+                        <label for="artist-first-scrobble-years">First scrobble year:</label>
                         <input type="text" id="artist-first-scrobble-years" placeholder="e.g., 2019, 2020">
                         
                         <hr class="separator">
@@ -163,14 +163,14 @@
                         </div>
                         
                         <div class="input-group">
-                            <label>Artist scrobbles (global) (min - max):</label>
+                            <label>Artist playcount (global) (min - max):</label>
                             <div class="input-pair">
                                 <input type="number" id="artist-global-scrobbles-min" placeholder="0" min="0">
                                 <input type="number" id="artist-global-scrobbles-max" placeholder="∞" min="0">
                             </div>
                         </div>
 
-                        <label for="artist-tags">Artist tags (e.g., genre or country):</label>
+                        <label for="artist-tags">Artist tags (e.g., genre, country):</label>
                         <input type="text" id="artist-tags" placeholder="e.g., pop, rock, american">
                         
                     </div>
@@ -183,20 +183,20 @@
                     <div class="dropdown-content">
 
                         <!-- Category 1: Name/Title filters -->
-                        <label for="album-name">Album name:</label>
+                        <label for="album-name">Album title:</label>
                         <input type="text" id="album-name" placeholder="e.g., Abbey Road">
                         
-                        <label for="album-initial">Initial:</label>
+                        <label for="album-initial">Album initial:</label>
                         <input type="text" id="album-initial" maxlength="1" placeholder="e.g., B">
                         
-                        <label for="album-includes">Name includes:</label>
+                        <label for="album-includes">Album title includes:</label>
                         <input type="text" id="album-includes" placeholder="e.g., Live">
                         
-                        <label for="album-excludes">Name doesn't include:</label>
+                        <label for="album-excludes">Album title excludes:</label>
                         <input type="text" id="album-excludes" placeholder="e.g., Deluxe">
                         
                         <div class="input-group">
-                            <label>Album name length (min - max):</label>
+                            <label>Album title length (min - max):</label>
                             <div class="input-pair">
                                 <input type="number" id="album-name-length-min" placeholder="0" min="0">
                                 <input type="number" id="album-name-length-max" placeholder="∞" min="0">
@@ -204,7 +204,7 @@
                         </div>
 
                         <div class="input-group">
-                            <label>Album name word count (min - max):</label>
+                            <label>Album title word count (min - max):</label>
                             <div class="input-pair">
                                 <input type="number" id="album-word-count-min" placeholder="0" min="0">
                                 <input type="number" id="album-word-count-max" placeholder="∞" min="0">
@@ -215,7 +215,7 @@
                         
                         <!-- Category 2: User data filters -->
                         <div class="input-group">
-                            <label>Album scrobbles (user) (min - max):</label>
+                            <label>Album scrobbles (your data) (min - max):</label>
                             <div class="input-pair">
                                 <input type="number" id="album-scrobble-count-min" placeholder="0" min="0">
                                 <input type="number" id="album-scrobble-count-max" placeholder="∞" min="0">
@@ -223,7 +223,7 @@
                         </div>
 
                         <div class="input-group">
-                            <label>Album rank (user) (top - bottom):</label>
+                            <label>Album rank (your top albums) (from - to):</label>
                             <div class="input-pair">
                                 <input type="number" id="album-rank-min" placeholder="0" min="0">
                                 <input type="number" id="album-rank-max" placeholder="∞" min="0">
@@ -231,7 +231,7 @@
                         </div>
 
                         <div class="input-group">
-                            <label>Album track count (min - max)</label>
+                            <label>Tracks scrobbled per album (min - max)</label>
                             <div class="input-pair">
                                 <input type="number" id="album-track-count-min" placeholder="0" min="0">
                                 <input type="number" id="album-track-count-max" placeholder="∞" min="0">
@@ -254,7 +254,7 @@
                         </div>
                         
                         <div class="input-group">
-                            <label>Album scrobbles (global) (min - max):</label>
+                            <label>Album playcount (global) (min - max):</label>
                             <div class="input-pair">
                                 <input type="number" id="album-global-scrobbles-min" placeholder="0" min="0">
                                 <input type="number" id="album-global-scrobbles-max" placeholder="∞" min="0">
@@ -272,13 +272,13 @@
                         <label for="track-name">Track title:</label>
                         <input type="text" id="track-name" placeholder="e.g., Yesterday">
                         
-                        <label for="track-initial">Initial:</label>
+                        <label for="track-initial">Track title initial:</label>
                         <input type="text" id="track-initial" maxlength="1" placeholder="e.g., C">
                         
-                        <label for="track-includes">Title includes:</label>
+                        <label for="track-includes">Track title includes:</label>
                         <input type="text" id="track-includes" placeholder="e.g., Love">
                         
-                        <label for="track-excludes">Title doesn't include:</label>
+                        <label for="track-excludes">Track title excludes:</label>
                         <input type="text" id="track-excludes" placeholder="e.g., Live">
                         
                         <div class="input-group">
@@ -301,7 +301,7 @@
                         
                         <!-- Category 2: User data filters -->
                         <div class="input-group">
-                            <label>Track scrobbles (user) (min - max):</label>
+                            <label>Track scrobbles (your data) (min - max):</label>
                             <div class="input-pair">
                                 <input type="number" id="track-scrobble-count-min" placeholder="0" min="0">
                                 <input type="number" id="track-scrobble-count-max" placeholder="∞" min="0">
@@ -309,7 +309,7 @@
                         </div>
 
                         <div class="input-group">
-                            <label>Track rank (user) (top - bottom):</label>
+                            <label>Track rank (your top tracks) (top - bottom):</label>
                             <div class="input-pair">
                                 <input type="number" id="track-rank-min" placeholder="0" min="0">
                                 <input type="number" id="track-rank-max" placeholder="∞" min="0">
@@ -331,7 +331,7 @@
                         </div>
                         
                         <div class="input-group">
-                            <label>Track scrobbles (global) (min - max):</label>
+                            <label>Track playcount (global) (min - max):</label>
                             <div class="input-pair">
                                 <input type="number" id="track-global-scrobbles-min" placeholder="0" min="0">
                                 <input type="number" id="track-global-scrobbles-max" placeholder="∞" min="0">
@@ -397,7 +397,7 @@
                         </select>
 
                         <div class="input-group">
-                            <label>Scrobble order range (first - last):</label>
+                            <label>Scrobble sequence range (from - to):</label>
                             <div class="input-pair">
                                 <input type="number" id="scrobble-order-from" placeholder="0" min="0">
                                 <input type="number" id="scrobble-order-to" placeholder="∞" min="0">
