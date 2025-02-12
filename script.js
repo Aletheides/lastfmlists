@@ -1,5 +1,6 @@
 // Global variables
 let allTracks = [];
+let filteredData = [];
 let lastfmData = [];
 let artistsData = []; // [{ name, listeners, playcount, debutYear }]
 let albumsData = [];  // [{ title, artist, releaseDate, playcount }]
@@ -75,14 +76,18 @@ function openDatabase() {
 }
   
 function saveUserData(username, data) {
+    if (!data || Object.keys(data).length === 0) {
+        return Promise.reject(new Error('Cannot save empty data'));
+    }
+
     return openDatabase().then(db => {
-      return new Promise((resolve, reject) => {
-        const transaction = db.transaction(STORE_NAME, 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.put({ username, data, timestamp: Date.now() });
-        request.onsuccess = () => resolve();
-        request.onerror = (event) => reject(event);
-      });
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction(STORE_NAME, 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.put({ username, data, timestamp: Date.now() });
+            request.onsuccess = () => resolve();
+            request.onerror = (event) => reject(event);
+        });
     });
 }
   
@@ -97,6 +102,298 @@ function getUserData(username) {
       });
     });
 }
+
+// Event listener for form submission (data load)
+document.getElementById("username-form").addEventListener("submit", async (event) => {
+	event.preventDefault();
+	const username = document.getElementById("username").value.trim();
+
+	// Try to load saved data for the username from IndexedDB
+	let savedData = await getUserData(username).catch(err => {
+		console.error("Error retrieving saved data", err);
+		return null;
+	});
+
+    if (savedData) {
+        // Saved data exists – retrieve the saved tracks, artists, and albums.
+        let { allTracks: savedAllTracks, artistsData: savedArtistsData, albumsData: savedAlbumsData, tracksData: savedTracksData } = savedData.data;
+    
+        // Assign saved data to global variables
+        artistsData = savedArtistsData || [];
+        albumsData = savedAlbumsData || [];
+        tracksData = savedTracksData || [];
+    
+        // Find the latest track date in the saved allTracks.
+        let latestTimestamp = 0;
+        savedAllTracks.forEach(track => {
+            const ts = parseInt(track.Date);
+            if (ts > latestTimestamp) latestTimestamp = ts;
+        });
+    
+        // Fetch recent tracks from Last.fm that occurred after the latest saved track.
+        loadingDiv.innerHTML = "<p>Fetching recent tracks...</p>";
+        let newTracks = await fetchRecentTracksSince(username, latestTimestamp);
+    
+        // Merge new tracks with the saved tracks, keeping chronological order.
+        allTracks = newTracks.concat(savedAllTracks);
+    } else {
+        // No saved data exists, fetch all history.
+        allTracks = await fetchListeningHistory(username);
+    }
+    
+    allTracks = allTracks.filter(track => {
+        if (!track.Date) {
+            console.warn("Skipping track due to missing date:", track);
+            return false;
+        }
+        return true;
+    });
+
+    // Sort allTracks by date (assuming track.Date is a timestamp in milliseconds as a string)
+    allTracks.sort((a, b) => parseInt(a.Date, 10) - parseInt(b.Date, 10));
+
+    // Assign an order key (index + 1) to each track
+    allTracks = allTracks.map((track, index) => {
+        track.order = index + 1;
+        return track;
+    });
+
+	// ✅ ALWAYS re-fetch the top stats to update rankings and counts!
+	topArtists = await fetchTopArtists(username);
+	topAlbums = await fetchTopAlbums(username);
+	topTracks = await fetchTopTracks(username);
+
+    // Reset track counts in artistsData and albumsData
+    const artistTrackSets = {};
+    const albumTrackSets = {};
+
+    allTracks.forEach(item => {
+        const artistKey = item.Artist.trim().toLowerCase();
+        const albumKey = `${item.Album.trim().toLowerCase()}||${item.Artist.trim().toLowerCase()}`;
+        const trackKey = item.Track.trim().toLowerCase();
+
+        if (!artistTrackSets[artistKey]) artistTrackSets[artistKey] = new Set();
+        if (!albumTrackSets[albumKey]) albumTrackSets[albumKey] = new Set();
+
+        artistTrackSets[artistKey].add(trackKey);
+        albumTrackSets[albumKey].add(trackKey);
+    });
+
+	// Objects to track earliest scrobbles
+	const firstScrobbles = { artists: {}, albums: {}, tracks: {} };
+    const lastScrobbles = { artists: {}, albums: {}, tracks: {} };
+    loadingDiv.innerHTML = "<p>Processing first/last scrobbles...</p>";
+
+	// Iterate over allTracks to determine first scrobbles
+	allTracks.forEach(track => {
+		if (!track.Artist || !track.Track || !track.Date) {
+			console.warn("Skipping track due to missing data:", track);
+			return;
+		}
+
+		const artistKey = track.Artist.trim().toLowerCase();
+		const albumKey = track.Album?.trim() ? `${track.Album.trim().toLowerCase()}||${artistKey}` : null;
+		const trackKey = `${track.Track.trim().toLowerCase()}_${artistKey}`;
+		const uts = parseInt(track.Date, 10); // Already in milliseconds
+
+		if (!firstScrobbles.artists[artistKey] || uts < firstScrobbles.artists[artistKey]) {
+			firstScrobbles.artists[artistKey] = uts;
+		}
+		if (albumKey && (!firstScrobbles.albums[albumKey] || uts < firstScrobbles.albums[albumKey])) {
+			firstScrobbles.albums[albumKey] = uts;
+		}
+		if (!firstScrobbles.tracks[trackKey] || uts < firstScrobbles.tracks[trackKey]) {
+			firstScrobbles.tracks[trackKey] = uts;
+		}
+
+        if (!lastScrobbles.artists[artistKey] || uts > lastScrobbles.artists[artistKey]) {
+            lastScrobbles.artists[artistKey] = uts;
+        }
+        
+        // For albums: if we haven't stored a value yet, or if this track's uts is later than the stored one, update it.
+        if (albumKey && (!lastScrobbles.albums[albumKey] || uts > lastScrobbles.albums[albumKey])) {
+            lastScrobbles.albums[albumKey] = uts;
+        }
+        
+        // For tracks: if we haven't stored a value yet, or if this track's uts is later than the stored one, update it.
+        if (!lastScrobbles.tracks[trackKey] || uts > lastScrobbles.tracks[trackKey]) {
+            lastScrobbles.tracks[trackKey] = uts;
+        }
+	});
+
+	// ✅ Update data arrays with correct first scrobbles
+    const newArtistsData = topArtists.map((artist, index) => {
+        const key = artist.name.trim().toLowerCase();
+        return {
+            name: artist.name,
+            rank: index + 1, // Overwrite rank from the new fetch
+            firstscrobble: firstScrobbles.artists?.[key] ?? null,
+            lastscrobble: lastScrobbles.artists?.[key] ?? null,
+            user_scrobbles: parseInt(artist.user_scrobbles, 10) || 0,
+            track_count: artistTrackSets[key] ? artistTrackSets[key].size : 0
+        };
+    });
+    
+    // Create newAlbumsData with track counts
+    const newAlbumsData = topAlbums.map((album, index) => {
+        const key = `${album.name.trim().toLowerCase()}||${album.artist.trim().toLowerCase()}`;
+        return {
+            name: album.name,
+            artist: album.artist,
+            rank: index + 1,
+            firstscrobble: firstScrobbles.albums?.[key] ?? null,
+            lastscrobble: lastScrobbles.albums?.[key] ?? null,
+            user_scrobbles: parseInt(album.user_scrobbles, 10) || 0,
+            track_count: albumTrackSets[key] ? albumTrackSets[key].size : 0
+        };
+    });
+    
+    const newTracksData = topTracks.map((track, index) => {
+        const key = `${track.name.trim().toLowerCase()}_${track.artist.trim().toLowerCase()}`;
+        return {
+            name: track.name,
+            artist: track.artist,
+            rank: index + 1,
+            firstscrobble: firstScrobbles.tracks?.[key] ?? null,
+            lastscrobble: lastScrobbles.tracks?.[key] ?? null,
+            user_scrobbles: parseInt(track.user_scrobbles, 10) || 0
+        };
+    });
+    
+    loadingDiv.innerHTML = "<p>Merging data...</p>";
+
+    // Merge new data into the existing arrays (only updating the keys specified)
+    artistsData = mergeData(artistsData, newArtistsData, item => item.name.trim().toLowerCase());
+    albumsData = mergeData(albumsData, newAlbumsData, 
+        item => `${item.name.trim().toLowerCase()}_${item.artist.trim().toLowerCase()}`);
+    tracksData = mergeData(tracksData, newTracksData, 
+        item => `${item.name.trim().toLowerCase()}_${item.artist.trim().toLowerCase()}`);
+    
+    console.log("Merged artistsData:", artistsData);
+	console.log("Merged albumsData:", albumsData);
+	console.log("Merged tracksData:", tracksData);
+
+    loadingDiv.innerHTML = "<p>Mapping artists...</p>";
+
+    artistDataMap = artistsData.reduce((map, artist) => {
+        map[artist.name.toLowerCase()] = artist;
+        return map;
+    }, {});
+
+    loadingDiv.innerHTML = "<p>Mapping albums...</p>";
+    
+    albumDataMap = albumsData.reduce((map, album) => {
+        map[`${album.name.toLowerCase()}||${album.artist.toLowerCase()}`] = album;
+        return map;
+    }, {});
+
+    loadingDiv.innerHTML = "<p>Mapping tracks...</p>";
+    
+    trackDataMap = tracksData.reduce((map, track) => {
+        map[`${track.name.toLowerCase()}||${track.artist.toLowerCase()}`] = track;
+        return map;
+    }, {});
+
+	// ✅ Enable "Load Detailed Data" button
+	const loadDetailedBtn = document.getElementById("load-detailed-data");
+	loadDetailedBtn.disabled = false;
+	loadDetailedBtn.title = "Click to load detailed data!";
+
+	console.log("Final allTracks:", allTracks);
+	loadingDiv.innerHTML = ""; // Clear loading message
+
+	// ✅ Update UI
+	filterTracks();
+    displayEntities();
+	updateActiveFilters();
+
+});
+
+document.getElementById("load-detailed-data").addEventListener("click", async () => {
+	const confirmMsg = "Loading detailed data may take a long time and is subject to Last.fm API limits. Do you wish to continue?";
+	if (!confirm(confirmMsg)) return;
+	
+	const username = document.getElementById("username").value.trim();
+
+	// For Artists: choose those with >100 scrobbles or the top 250 (whichever is more)
+	let selectedArtists = topArtists.filter(artist => artist.playcount > 100);
+	if (selectedArtists.length < artistLimit) {
+		selectedArtists = topArtists.slice(0, artistLimit);
+	}
+	const fetchedArtists = await fetchAllArtistDetails(selectedArtists, artistLimit);
+	console.log("Fetched artist details:", fetchedArtists);
+
+	// For Albums: choose those with >10 scrobbles or the top 500 (whichever is more)
+	let selectedAlbums = topAlbums.filter(album => album.playcount > 10);
+	if (selectedAlbums.length < albumLimit) {
+		selectedAlbums = topAlbums.slice(0, albumLimit);
+	}
+	const fetchedAlbums = await fetchAllAlbumDetails(selectedAlbums, albumLimit);
+	console.log("Fetched album details:", fetchedAlbums);
+
+	// For Tracks: choose those with >5 scrobbles or the top 1000 (whichever is more)
+	let selectedTracks = topTracks.filter(track => track.playcount > 5);
+	if (selectedTracks.length < trackLimit) {
+		selectedTracks = topTracks.slice(0, trackLimit);
+	}
+	const fetchedTracks = await fetchAllTrackDetails(selectedTracks, trackLimit);
+	console.log("Fetched track details:", fetchedTracks);
+
+	// Process fetched data and format it before merging
+	const newArtistsData = fetchedArtists.map(artist => ({
+        ...artist,
+        name: artist.name,
+        listeners: parseInt(artist.listeners, 10) || 0,
+        playcount: parseInt(artist.playcount, 10) || 0,
+        tags: artist.tags || []
+    }));
+    
+    const newAlbumsData = fetchedAlbums.map(album => ({
+        ...album,
+        name: album.name,
+        artist: album.artist,
+        listeners: parseInt(album.listeners, 10) || 0,
+        playcount: parseInt(album.playcount, 10) || 0,
+    }));
+    
+    const newTracksData = fetchedTracks.map(track => ({
+        ...track,
+        name: track.name,
+        artist: track.artist?.name || track.artist,
+        duration: parseInt(track.duration, 10) || 0,
+        listeners: parseInt(track.listeners, 10) || 0,
+        playcount: parseInt(track.playcount, 10) || 0
+    }));
+
+	// Merge the new data into existing global arrays while keeping firstscrobble, user_scrobbles, and rank
+    artistsData = mergeData(artistsData, newArtistsData, item => item.name.trim().toLowerCase());
+    albumsData = mergeData(albumsData, newAlbumsData, 
+        item => `${item.name.trim().toLowerCase()}_${item.artist.trim().toLowerCase()}`);
+    tracksData = mergeData(tracksData, newTracksData, 
+        item => `${item.name.trim().toLowerCase()}_${item.artist.trim().toLowerCase()}`);
+
+	console.log("Merged artistsData:", artistsData);
+	console.log("Merged albumsData:", albumsData);
+	console.log("Merged tracksData:", tracksData);
+
+	// Update display, filters, etc.
+	loadingDiv.innerHTML = ""; // Clear loading message
+	filterTracks();
+    displayEntities();
+});
+
+function handleLoadAllDataToggle() {
+    const loadAllData = document.getElementById("load-all-data").checked;
+
+    // If checked, set limits to maximum possible values (effectively no limit)
+    artistLimit = loadAllData ? Infinity : 250;
+    albumLimit = loadAllData ? Infinity : 500;
+    trackLimit = loadAllData ? Infinity : 1000;
+
+}
+
+// Attach event listener to checkbox
+document.getElementById("load-all-data").addEventListener("change", handleLoadAllDataToggle);
 
 document.getElementById("save-data").addEventListener("click", async () => {
     const username = document.getElementById("username").value.trim();
@@ -118,9 +415,6 @@ document.getElementById("save-data").addEventListener("click", async () => {
 async function fetchListeningHistory(username) {
 	const baseUrl = `https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=${username}&api_key=${API_KEY}&format=json&extended=1&limit=200&autocorrect=0`;
 
-	// Get the timezone offset (in hours) in UTC
-    const timezoneOffset = new Date().getTimezoneOffset() * 60000; // in milliseconds
-
 	// First request to get total pages
 	const firstResponse = await fetch(baseUrl);
 	const firstData = await firstResponse.json();
@@ -139,19 +433,13 @@ async function fetchListeningHistory(username) {
 
 	// Process the first page of data
 	let lastfmData = firstData.recenttracks.track.map((track) => {
-		const timestamp = track.date?.uts ? parseInt(track.date.uts) : null;
-		let adjustedDate = "";
-
-		// Adjust the date based on the timezone offset
-		if (timestamp) {
-            adjustedDate = (timestamp * 1000 - timezoneOffset).toString();
-		}
+		const timestamp = track.date?.uts ? parseInt(track.date.uts) * 1000 : null;
 
 		return {
 			Artist: track.artist?.name || track.artist?.["#text"] || "Unknown", // Handle both name and #text
 			Album: track.album?.["#text"] || "Unknown",
 			Track: track.name || "Unknown",
-			Date: adjustedDate
+			Date: timestamp
 		};
 	});
 
@@ -169,19 +457,13 @@ async function fetchListeningHistory(username) {
 		if (data.recenttracks && Array.isArray(data.recenttracks.track)) {
 			// Process the tracks for the current page and append to lastfmData
 			lastfmData = lastfmData.concat(data.recenttracks.track.map((track) => {
-				const timestamp = track.date?.uts ? parseInt(track.date.uts) : null;
-				let adjustedDate = "";
-
-				// Adjust the date based on the timezone offset
-				if (timestamp) {
-                    adjustedDate = (timestamp * 1000 - timezoneOffset).toString();
-				}
+				const timestamp = track.date?.uts ? parseInt(track.date.uts) * 1000 : null;
 
 				return {
 					Artist: track.artist?.name || track.artist?.["#text"] || "Unknown",
 					Album: track.album?.["#text"] || "Unknown",
 					Track: track.name || "Unknown",
-					Date: adjustedDate 
+					Date: timestamp
 				};
 			}));
 			console.log(`Fetched Page ${page}, Total Tracks: ${lastfmData.length}`);
@@ -223,16 +505,14 @@ async function fetchRecentTracksSince(username, latestTimestamp) {
   
         // Convert Last.fm's uts (seconds) to a JavaScript timestamp (ms)
         const ts = parseInt(track.date.uts, 10) * 1000;
-        // Adjust by timezone offset (milliseconds)
-        adjustedTimestamp = (ts - new Date().getTimezoneOffset() * 60000).toString();
   
         // If the track is newer than latestTimestamp, include it.
-        if (adjustedTimestamp > latestTimestamp) {
+        if (ts > latestTimestamp) {
           newTracks.push({
             Artist: track.artist?.name || track.artist?.["#text"] || "Unknown",
             Album: track.album?.["#text"] || "Unknown",
             Track: track.name || "Unknown",
-            Date: adjustedTimestamp.toString()
+            Date: ts
           });
         } else {
           // We've reached tracks older than our saved latest timestamp; stop processing.
@@ -563,278 +843,6 @@ async function fetchAllTrackDetails(tracks, limit) {
 	return results;
 }
 
-// Event listener for form submission (data load)
-document.getElementById("username-form").addEventListener("submit", async (event) => {
-	event.preventDefault();
-	const username = document.getElementById("username").value.trim();
-
-	// Try to load saved data for the username from IndexedDB
-	let savedData = await getUserData(username).catch(err => {
-		console.error("Error retrieving saved data", err);
-		return null;
-	});
-
-    if (savedData) {
-        // Saved data exists – retrieve the saved tracks, artists, and albums.
-        let { allTracks: savedAllTracks, artistsData: savedArtistsData, albumsData: savedAlbumsData, tracksData: savedTracksData } = savedData.data;
-    
-        // Assign saved data to global variables
-        artistsData = savedArtistsData || [];
-        albumsData = savedAlbumsData || [];
-        tracksData = savedTracksData || [];
-    
-        // Find the latest track date in the saved allTracks.
-        let latestTimestamp = 0;
-        savedAllTracks.forEach(track => {
-            const ts = parseInt(track.Date);
-            if (ts > latestTimestamp) latestTimestamp = ts;
-        });
-    
-        // Fetch recent tracks from Last.fm that occurred after the latest saved track.
-        loadingDiv.innerHTML = "<p>Fetching recent tracks...</p>";
-        let newTracks = await fetchRecentTracksSince(username, latestTimestamp);
-    
-        // Merge new tracks with the saved tracks, keeping chronological order.
-        allTracks = newTracks.concat(savedAllTracks);
-    } else {
-        // No saved data exists, fetch all history.
-        allTracks = await fetchListeningHistory(username);
-    }
-    
-    allTracks = allTracks.filter(track => {
-        if (!track.Date) {
-            console.warn("Skipping track due to missing date:", track);
-            return false;
-        }
-        return true;
-    });
-
-    // Sort allTracks by date (assuming track.Date is a timestamp in milliseconds as a string)
-    allTracks.sort((a, b) => parseInt(a.Date, 10) - parseInt(b.Date, 10));
-
-    // Assign an order key (index + 1) to each track
-    allTracks = allTracks.map((track, index) => {
-        track.order = index + 1;
-        return track;
-    });
-
-	// ✅ ALWAYS re-fetch the top stats to update rankings and counts!
-	topArtists = await fetchTopArtists(username);
-	topAlbums = await fetchTopAlbums(username);
-	topTracks = await fetchTopTracks(username);
-
-    // Reset track counts in artistsData and albumsData
-    const artistTrackSets = {};
-    const albumTrackSets = {};
-
-    allTracks.forEach(item => {
-        const artistKey = item.Artist.trim().toLowerCase();
-        const albumKey = `${item.Album.trim().toLowerCase()}||${item.Artist.trim().toLowerCase()}`;
-        const trackKey = item.Track.trim().toLowerCase();
-
-        if (!artistTrackSets[artistKey]) artistTrackSets[artistKey] = new Set();
-        if (!albumTrackSets[albumKey]) albumTrackSets[albumKey] = new Set();
-
-        artistTrackSets[artistKey].add(trackKey);
-        albumTrackSets[albumKey].add(trackKey);
-    });
-
-	// Objects to track earliest scrobbles
-	const firstScrobbles = { artists: {}, albums: {}, tracks: {} };
-    loadingDiv.innerHTML = "<p>Processing first scrobbles...</p>";
-
-	// Iterate over allTracks to determine first scrobbles
-	allTracks.forEach(track => {
-		if (!track.Artist || !track.Track || !track.Date) {
-			console.warn("Skipping track due to missing data:", track);
-			return;
-		}
-
-		const artistKey = track.Artist.trim().toLowerCase();
-		const albumKey = track.Album?.trim() ? `${track.Album.trim().toLowerCase()}||${artistKey}` : null;
-		const trackKey = `${track.Track.trim().toLowerCase()}_${artistKey}`;
-		const uts = parseInt(track.Date, 10); // Already in milliseconds
-
-		if (!firstScrobbles.artists[artistKey] || uts < firstScrobbles.artists[artistKey]) {
-			firstScrobbles.artists[artistKey] = uts;
-		}
-		if (albumKey && (!firstScrobbles.albums[albumKey] || uts < firstScrobbles.albums[albumKey])) {
-			firstScrobbles.albums[albumKey] = uts;
-		}
-		if (!firstScrobbles.tracks[trackKey] || uts < firstScrobbles.tracks[trackKey]) {
-			firstScrobbles.tracks[trackKey] = uts;
-		}
-	});
-
-	// ✅ Update data arrays with correct first scrobbles
-    const newArtistsData = topArtists.map((artist, index) => {
-        const key = artist.name.trim().toLowerCase();
-        return {
-            name: artist.name,
-            rank: index + 1, // Overwrite rank from the new fetch
-            firstscrobble: firstScrobbles.artists?.[key] ?? null,
-            user_scrobbles: parseInt(artist.user_scrobbles, 10) || 0,
-            track_count: artistTrackSets[key] ? artistTrackSets[key].size : 0
-        };
-    });
-    
-    // Create newAlbumsData with track counts
-    const newAlbumsData = topAlbums.map((album, index) => {
-        const key = `${album.name.trim().toLowerCase()}||${album.artist.trim().toLowerCase()}`;
-        return {
-            name: album.name,
-            artist: album.artist,
-            rank: index + 1,
-            firstscrobble: firstScrobbles.albums?.[key] ?? null,
-            user_scrobbles: parseInt(album.user_scrobbles, 10) || 0,
-            track_count: albumTrackSets[key] ? albumTrackSets[key].size : 0
-        };
-    });
-    
-    const newTracksData = topTracks.map((track, index) => {
-        const key = `${track.name.trim().toLowerCase()}_${track.artist.trim().toLowerCase()}`;
-        return {
-            name: track.name,
-            artist: track.artist,
-            rank: index + 1,
-            firstscrobble: firstScrobbles.tracks?.[key] ?? null,
-            user_scrobbles: parseInt(track.user_scrobbles, 10) || 0
-        };
-    });
-    
-    loadingDiv.innerHTML = "<p>Merging data...</p>";
-
-    // Merge new data into the existing arrays (only updating the keys specified)
-    artistsData = mergeData(artistsData, newArtistsData, item => item.name.trim().toLowerCase());
-    albumsData = mergeData(albumsData, newAlbumsData, 
-        item => `${item.name.trim().toLowerCase()}_${item.artist.trim().toLowerCase()}`);
-    tracksData = mergeData(tracksData, newTracksData, 
-        item => `${item.name.trim().toLowerCase()}_${item.artist.trim().toLowerCase()}`);
-    
-    console.log("Merged artistsData:", artistsData);
-	console.log("Merged albumsData:", albumsData);
-	console.log("Merged tracksData:", tracksData);
-
-    loadingDiv.innerHTML = "<p>Mapping artists...</p>";
-
-    artistDataMap = artistsData.reduce((map, artist) => {
-        map[artist.name.toLowerCase()] = artist;
-        return map;
-    }, {});
-
-    loadingDiv.innerHTML = "<p>Mapping albums...</p>";
-    
-    albumDataMap = albumsData.reduce((map, album) => {
-        map[`${album.name.toLowerCase()}||${album.artist.toLowerCase()}`] = album;
-        return map;
-    }, {});
-
-    loadingDiv.innerHTML = "<p>Mapping tracks...</p>";
-    
-    trackDataMap = tracksData.reduce((map, track) => {
-        map[`${track.name.toLowerCase()}||${track.artist.toLowerCase()}`] = track;
-        return map;
-    }, {});
-
-	// ✅ Enable "Load Detailed Data" button
-	const loadDetailedBtn = document.getElementById("load-detailed-data");
-	loadDetailedBtn.disabled = false;
-	loadDetailedBtn.title = "Click to load detailed data!";
-
-	console.log("Final allTracks:", allTracks);
-	loadingDiv.innerHTML = ""; // Clear loading message
-
-	// ✅ Update UI
-	applyFilters();
-	updateActiveFilters();
-
-});
-
-document.getElementById("load-detailed-data").addEventListener("click", async () => {
-	const confirmMsg = "Loading detailed data may take a long time and is subject to Last.fm API limits. Do you wish to continue?";
-	if (!confirm(confirmMsg)) return;
-	
-	const username = document.getElementById("username").value.trim();
-
-	// For Artists: choose those with >100 scrobbles or the top 250 (whichever is more)
-	let selectedArtists = topArtists.filter(artist => artist.playcount > 100);
-	if (selectedArtists.length < artistLimit) {
-		selectedArtists = topArtists.slice(0, artistLimit);
-	}
-	const fetchedArtists = await fetchAllArtistDetails(selectedArtists, artistLimit);
-	console.log("Fetched artist details:", fetchedArtists);
-
-	// For Albums: choose those with >10 scrobbles or the top 500 (whichever is more)
-	let selectedAlbums = topAlbums.filter(album => album.playcount > 10);
-	if (selectedAlbums.length < albumLimit) {
-		selectedAlbums = topAlbums.slice(0, albumLimit);
-	}
-	const fetchedAlbums = await fetchAllAlbumDetails(selectedAlbums, albumLimit);
-	console.log("Fetched album details:", fetchedAlbums);
-
-	// For Tracks: choose those with >5 scrobbles or the top 1000 (whichever is more)
-	let selectedTracks = topTracks.filter(track => track.playcount > 5);
-	if (selectedTracks.length < trackLimit) {
-		selectedTracks = topTracks.slice(0, trackLimit);
-	}
-	const fetchedTracks = await fetchAllTrackDetails(selectedTracks, trackLimit);
-	console.log("Fetched track details:", fetchedTracks);
-
-	// Process fetched data and format it before merging
-	const newArtistsData = fetchedArtists.map(artist => ({
-        ...artist,
-        name: artist.name,
-        listeners: parseInt(artist.listeners, 10) || 0,
-        playcount: parseInt(artist.playcount, 10) || 0,
-        tags: artist.tags || []
-    }));
-    
-    const newAlbumsData = fetchedAlbums.map(album => ({
-        ...album,
-        name: album.name,
-        artist: album.artist,
-        listeners: parseInt(album.listeners, 10) || 0,
-        playcount: parseInt(album.playcount, 10) || 0,
-    }));
-    
-    const newTracksData = fetchedTracks.map(track => ({
-        ...track,
-        name: track.name,
-        artist: track.artist?.name || track.artist,
-        duration: parseInt(track.duration, 10) || 0,
-        listeners: parseInt(track.listeners, 10) || 0,
-        playcount: parseInt(track.playcount, 10) || 0
-    }));
-
-	// Merge the new data into existing global arrays while keeping firstscrobble, user_scrobbles, and rank
-    artistsData = mergeData(artistsData, newArtistsData, item => item.name.trim().toLowerCase());
-    albumsData = mergeData(albumsData, newAlbumsData, 
-        item => `${item.name.trim().toLowerCase()}_${item.artist.trim().toLowerCase()}`);
-    tracksData = mergeData(tracksData, newTracksData, 
-        item => `${item.name.trim().toLowerCase()}_${item.artist.trim().toLowerCase()}`);
-
-	console.log("Merged artistsData:", artistsData);
-	console.log("Merged albumsData:", albumsData);
-	console.log("Merged tracksData:", tracksData);
-
-	// Update display, filters, etc.
-	loadingDiv.innerHTML = ""; // Clear loading message
-	applyFilters();
-});
-
-function handleLoadAllDataToggle() {
-    const loadAllData = document.getElementById("load-all-data").checked;
-
-    // If checked, set limits to maximum possible values (effectively no limit)
-    artistLimit = loadAllData ? Infinity : 250;
-    albumLimit = loadAllData ? Infinity : 500;
-    trackLimit = loadAllData ? Infinity : 1000;
-
-}
-
-// Attach event listener to checkbox
-document.getElementById("load-all-data").addEventListener("change", handleLoadAllDataToggle);
-
 // Load CSV file
 document.getElementById('csv-file').addEventListener('change', async (event) => {
     const file = event.target.files[0];
@@ -874,6 +882,7 @@ document.getElementById('csv-file').addEventListener('change', async (event) => 
         // ✅ Initialize tracking objects
         raw_data = [];
         const firstScrobbles = { artists: {}, albums: {}, tracks: {} };
+        const lastScrobbles = { artists: {}, albums: {}, tracks: {} };
         const artistTrackSets = {};
         const albumTrackSets = {};
 
@@ -897,6 +906,20 @@ document.getElementById('csv-file').addEventListener('change', async (event) => 
             }
             if (!firstScrobbles.tracks[trackKey] || uts < firstScrobbles.tracks[trackKey]) {
                 firstScrobbles.tracks[trackKey] = uts;
+            }
+
+            if (!lastScrobbles.artists[artistKey] || uts > lastScrobbles.artists[artistKey]) {
+                lastScrobbles.artists[artistKey] = uts;
+            }
+            
+            // For albums: if we haven't stored a value yet, or if this track's uts is later than the stored one, update it.
+            if (albumKey && (!lastScrobbles.albums[albumKey] || uts > lastScrobbles.albums[albumKey])) {
+                lastScrobbles.albums[albumKey] = uts;
+            }
+            
+            // For tracks: if we haven't stored a value yet, or if this track's uts is later than the stored one, update it.
+            if (!lastScrobbles.tracks[trackKey] || uts > lastScrobbles.tracks[trackKey]) {
+                lastScrobbles.tracks[trackKey] = uts;
             }
 
             if (!artistTrackSets[artistKey]) artistTrackSets[artistKey] = new Set();
@@ -939,6 +962,7 @@ document.getElementById('csv-file').addEventListener('change', async (event) => 
                 name: artist.name,
                 rank: index + 1,
                 firstscrobble: firstScrobbles.artists?.[artistKey] ?? null,
+                lastscrobble: lastScrobbles.artists?.[artistKey] ?? null,
                 user_scrobbles: parseInt(artist.user_scrobbles, 10) || 0,
                 track_count: artistTrackSets[artistKey] ? artistTrackSets[artistKey].size : 0,
             };
@@ -953,6 +977,7 @@ document.getElementById('csv-file').addEventListener('change', async (event) => 
                 artist: album.artist,
                 rank: index + 1,
                 firstscrobble: firstScrobbles.albums?.[albumKey] ?? null,
+                lastscrobble: lastScrobbles.albums?.[albumKey] ?? null,
                 user_scrobbles: parseInt(album.user_scrobbles, 10) || 0,
                 track_count: albumTrackSets[albumKey] ? albumTrackSets[albumKey].size : 0,
             };
@@ -967,6 +992,7 @@ document.getElementById('csv-file').addEventListener('change', async (event) => 
                 artist: track.artist,
                 rank: index + 1,
                 firstscrobble: firstScrobbles.tracks?.[trackKey] ?? null,
+                lastscrobble: lastScrobbles.tracks?.[trackKey] ?? null,
                 user_scrobbles: parseInt(track.user_scrobbles, 10) || 0,
             };
         }).filter(Boolean);
@@ -1005,7 +1031,8 @@ document.getElementById('csv-file').addEventListener('change', async (event) => 
         loadingDiv.innerHTML = ""; // Clear loading message
 
         // ✅ Update UI
-        applyFilters();
+        filterTracks();
+        displayEntities();
         updateActiveFilters();
     };
     reader.readAsText(file);
@@ -1020,9 +1047,6 @@ function parseCSV(data) {
     const dateHeader = headers.find(header => header.startsWith('date#'));
     const renamedHeaders = headers.map(header => (header === dateHeader ? 'date' : header));
 
-    // Get the timezone offset from the dropdown
-    const timezoneOffset = new Date().getTimezoneOffset() * 60000;
-
     return lines.slice(1).map(line => {
         const values = line.match(/(".*?"|[^;]+)(?=;|$)/g)
             .map(val => val.replace(/"/g, '').trim());
@@ -1032,11 +1056,10 @@ function parseCSV(data) {
             return obj;
         }, {});
 
-        // Adjust the date based on the timezone offset
         if (track.date) {
             const timestamp = parseInt(track.date);
             if (!isNaN(timestamp)) {
-                track.date = (timestamp - timezoneOffset).toString();
+                track.date = timestamp
             }
         }
 
@@ -1227,6 +1250,9 @@ function calculateConsecutivePeriods(tracks, period, entityType = 'track') {
 	// Sort tracks by Date (assuming Date is in ms as string)
 	tracks.sort((a, b) => parseInt(a.Date) - parseInt(b.Date));
 
+    const timezoneOffset = new Date().getTimezoneOffset(); // Minutes
+    const timezoneOffsetMs = timezoneOffset * 60000;
+
 	const groupKeyFunc = (track) => {
 		if (entityType === 'track') {
 			return `${track.Artist} - ${track.Track}`;
@@ -1256,7 +1282,7 @@ function calculateConsecutivePeriods(tracks, period, entityType = 'track') {
 			let periodKey;
 			switch (period) {
 				case 'day':
-					periodKey = Math.floor(timestamp / 86400000);
+					periodKey = Math.floor((timestamp - timezoneOffsetMs) / 86400000);
 					break;
 				case 'week':
 					periodKey = getWeekIdentifier(date);
@@ -1265,7 +1291,7 @@ function calculateConsecutivePeriods(tracks, period, entityType = 'track') {
 					periodKey = date.getFullYear() * 12 + date.getMonth();
 					break;
 				default:
-					periodKey = Math.floor(timestamp / 86400000);
+					periodKey = Math.floor((timestamp - timezoneOffsetMs) / 86400000);
 			}
 			periodsSet.add(periodKey);
 		});
@@ -1326,13 +1352,15 @@ function calculateConsecutivePeriods(tracks, period, entityType = 'track') {
 
 // Helper function to find a matching track's timestamp
 function getMatchingTrackTime(groupTracks, periodKey, period) {
+    const timezoneOffset = new Date().getTimezoneOffset(); // Minutes
+    const timezoneOffsetMs = timezoneOffset * 60000; 
 	const matchingTrack = groupTracks.find((t) => {
 		const ts = parseInt(t.Date);
 		const d = new Date(ts);
 		let pKey;
 		switch (period) {
 			case 'day':
-				pKey = Math.floor(ts / 86400000);
+				pKey = Math.floor(ts - timezoneOffsetMs / 86400000);
 				break;
 			case 'week':
 				pKey = getWeekIdentifier(d);
@@ -1348,8 +1376,10 @@ function getMatchingTrackTime(groupTracks, periodKey, period) {
 
 // Convert a date to a unique week identifier
 function getWeekIdentifier(date) {
+    const timezoneOffset = new Date().getTimezoneOffset(); // Minutes
+    const timezoneOffsetMs = timezoneOffset * 60000; 
     const firstJan = new Date(date.getFullYear(), 0, 1);
-    const daysOffset = Math.floor((date - firstJan) / 86400000);
+    const daysOffset = Math.floor((date - timezoneOffsetMs - firstJan) / 86400000);
     return date.getFullYear() * 52 + Math.ceil((daysOffset + firstJan.getDay()) / 7);
 }
 
@@ -1532,6 +1562,121 @@ function formatDuration(durationInMillis) {
     return result.trim();
 }
 
+/**
+ * Calculate the first instance an entity (track/album/artist) reaches X scrobbles.
+ * @param {Array} tracks - Array of track objects.
+ * @param {number} x - The scrobble milestone.
+ * @param {string} [entityType='track'] - Grouping level: 'track', 'album', or 'artist'.
+ * @returns {Array} - Array of grouped objects with date reached and time needed.
+ */
+function calculateFirstToXScrobbles(tracks, x, entityType = 'track') {
+    console.log(`Calculating first to ${x} scrobbles for entityType: ${entityType}`);
+
+    const groupKeyFunc = (track) => {
+        if (entityType === 'track') {
+            return `${track.Artist} - ${track.Track}`;
+        } else if (entityType === 'album') {
+            return `${track.Album}||${track.Artist}`;
+        } else if (entityType === 'artist') {
+            return track.Artist;
+        }
+        return `${track.Artist} - ${track.Track}`;
+    };
+
+    let groups = tracks.reduce((acc, track) => {
+        const key = groupKeyFunc(track);
+        if (!acc[key]) {
+            acc[key] = {
+                count: 0,
+                dates: []
+            };
+            if (entityType === 'track') {
+                acc[key].Artist = track.Artist;
+                acc[key].Track = track.Track;
+            } else if (entityType === 'album') {
+                acc[key].name = track.Album;
+                acc[key].artist = track.Artist;
+            } else if (entityType === 'artist') {
+                acc[key].name = track.Artist;
+            }
+        }
+
+        const timestamp = parseInt(track.Date);
+        if (!isNaN(timestamp)) {
+            acc[key].dates.push(timestamp);
+            acc[key].count++;
+
+            if (acc[key].count === x) {
+                acc[key].dateReached = timestamp;
+                acc[key].timeNeeded = timestamp - tracks[0].Date;
+            }
+        }
+        return acc;
+    }, {});
+
+    console.log('First to X scrobbles groups:', groups);
+    return Object.values(groups).filter(item => item.count >= x);
+}
+
+/**
+ * Calculate the fastest time an entity (track/album/artist) reaches X scrobbles.
+ * @param {Array} tracks - Array of track objects.
+ * @param {number} x - The scrobble milestone.
+ * @param {string} [entityType='track'] - Grouping level: 'track', 'album', or 'artist'.
+ * @returns {Array} - Array of grouped objects with time needed, first scrobble, and date reached.
+ */
+function calculateFastestToXScrobbles(tracks, x, entityType = 'track') {
+    console.log(`Calculating fastest to ${x} scrobbles for entityType: ${entityType}`);
+
+    const groupKeyFunc = (track) => {
+        if (entityType === 'track') {
+            return `${track.Artist} - ${track.Track}`;
+        } else if (entityType === 'album') {
+            return `${track.Album}||${track.Artist}`;
+        } else if (entityType === 'artist') {
+            return track.Artist;
+        }
+        return `${track.Artist} - ${track.Track}`;
+    };
+
+    let groups = tracks.reduce((acc, track) => {
+        const key = groupKeyFunc(track);
+        if (!acc[key]) {
+            acc[key] = {
+                count: 0,
+                dates: []
+            };
+            if (entityType === 'track') {
+                acc[key].Artist = track.Artist;
+                acc[key].Track = track.Track;
+            } else if (entityType === 'album') {
+                acc[key].name = track.Album;
+                acc[key].artist = track.Artist;
+            } else if (entityType === 'artist') {
+                acc[key].name = track.Artist;
+            }
+        }
+
+        const timestamp = parseInt(track.Date);
+        if (!isNaN(timestamp)) {
+            acc[key].dates.push(timestamp);
+            acc[key].count++;
+
+            if (acc[key].count === x) {
+                acc[key].firstScrobble = acc[key].dates[0];
+                acc[key].dateReached = timestamp;
+                acc[key].timeNeeded = timestamp - acc[key].firstScrobble;
+            }
+        }
+        return acc;
+    }, {});
+
+    console.log('Fastest to X scrobbles groups:', groups);
+    return Object.values(groups)
+        .filter(item => item.count >= x)
+}
+
+
 function displayTopTracks(tracks) {
     const resultsDiv = document.getElementById("results");
     resultsDiv.innerHTML = "";
@@ -1664,6 +1809,13 @@ function getAdditionalInfo(sortingBasis, entity) {
         return `Listening %: ${entity.listeningPercentage.toFixed(2)}%<br>Scrobbles: ${entity.scrobbles}<br>Playcount: ${entity.playcount}`;
     } else if (sortingBasis === 'time-spent-listening') {
         return `Listening time: ${formatDuration(entity.listeningDuration)}`;
+    } else if (sortingBasis === 'first-n-scrobbles') {;
+		const endDate = entity.dateReached ? new Date(parseInt(entity.dateReached)).toISOString().split('T')[0] : 'N/A';
+        return `Date reached: ${endDate}<br>Time to reach: ${formatDuration(entity.timeNeeded)}`
+    } else if (sortingBasis === 'fastest-n-scrobbles') {
+        const startDate = entity.firstScrobble ? new Date(parseInt(entity.firstScrobble)).toISOString().split('T')[0] : 'N/A';
+		const endDate = entity.dateReached ? new Date(parseInt(entity.dateReached)).toISOString().split('T')[0] : 'N/A';
+        return `Time to reach: ${formatDuration(entity.timeNeeded)}<br>First scrobble: ${startDate}<br>Date reached: ${endDate} `
     } else {
 		return `Scrobbles: ${entity.count}`;
 	}
@@ -1769,12 +1921,9 @@ function applyTracksPerEntityFilter(tracks, maxArtist) {
     return filteredTracks;
 }
 
-function applyFilters() {
+function filterTracks() {
     if (!allTracks) return;
-    let filteredData = allTracks;
-    const entityType = document.getElementById("entity-type").value;
-    const sortingBasis = document.getElementById("sorting-basis").value;
-    const maxPerArtist = parseInt(document.getElementById("max-per-artist").value) || Infinity;
+    filteredData = allTracks;
 
     const filterFunctions = {
 
@@ -1872,6 +2021,50 @@ function applyFilters() {
                 : null;
             return firstYear && value.split(",").map(v => parseInt(v.trim(), 10)).includes(firstYear);
         },
+        "artist-days-since-last-min": (item, value) => {
+            // Look up the artist's last scrobble timestamp from artistDataMap
+            const lastScrobble = artistDataMap[item.Artist.toLowerCase()]?.lastscrobble;
+            if (!lastScrobble) return false;
+            // Calculate days since last scrobble
+            const daysSince = Math.floor((Date.now() - lastScrobble) / (1000 * 60 * 60 * 24));
+            return daysSince >= parseInt(value, 10);
+        },
+        "artist-days-since-last-max": (item, value) => {
+            const lastScrobble = artistDataMap[item.Artist.toLowerCase()]?.lastscrobble;
+            if (!lastScrobble) return false;
+            const daysSince = Math.floor((Date.now() - lastScrobble) / (1000 * 60 * 60 * 24));
+            return daysSince <= parseInt(value, 10);
+        },
+        "album-days-since-last-min": (item, value) => {
+            // Construct the album key: "album||artist"
+            const albumKey = `${item.Album.toLowerCase()}||${item.Artist.toLowerCase()}`;
+            const lastScrobble = albumDataMap[albumKey]?.lastscrobble;
+            if (!lastScrobble) return false;
+            const daysSince = Math.floor((Date.now() - lastScrobble) / (1000 * 60 * 60 * 24));
+            return daysSince >= parseInt(value, 10);
+        },
+        "album-days-since-last-max": (item, value) => {
+            const albumKey = `${item.Album.toLowerCase()}||${item.Artist.toLowerCase()}`;
+            const lastScrobble = albumDataMap[albumKey]?.lastscrobble;
+            if (!lastScrobble) return false;
+            const daysSince = Math.floor((Date.now() - lastScrobble) / (1000 * 60 * 60 * 24));
+            return daysSince <= parseInt(value, 10);
+        },
+        "track-days-since-last-min": (item, value) => {
+            // Construct the track key: "track||artist"
+            const trackKey = `${item.Track.toLowerCase()}||${item.Artist.toLowerCase()}`;
+            const lastScrobble = trackDataMap[trackKey]?.lastscrobble;
+            if (!lastScrobble) return false;
+            const daysSince = Math.floor((Date.now() - lastScrobble) / (1000 * 60 * 60 * 24));
+            return daysSince >= parseInt(value, 10);
+        },
+        "track-days-since-last-max": (item, value) => {
+            const trackKey = `${item.Track.toLowerCase()}||${item.Artist.toLowerCase()}`;
+            const lastScrobble = trackDataMap[trackKey]?.lastscrobble;
+            if (!lastScrobble) return false;
+            const daysSince = Math.floor((Date.now() - lastScrobble) / (1000 * 60 * 60 * 24));
+            return daysSince <= parseInt(value, 10);
+        },
 
         // Filters based on detailed data
 
@@ -1951,7 +2144,17 @@ function applyFilters() {
         if (filterFunctions[filter.id]) {
             filteredData = filteredData.filter(item => filterFunctions[filter.id](item, filter.value));
         }
-    });
+
+        return filteredData
+
+    })};
+
+function displayEntities() {
+
+    const entityType = document.getElementById("entity-type").value;
+    const sortingBasis = document.getElementById("sorting-basis").value;
+    const maxPerArtist = parseInt(document.getElementById("max-per-artist").value) || Infinity;
+    const xValue = parseInt(document.getElementById("x-value").value) || 1;
 
     if (sortingBasis === 'scrobbles') {
         // Default grouping by scrobbles (using count aggregation)
@@ -2026,6 +2229,12 @@ function applyFilters() {
     } else if (sortingBasis === 'time-spent-listening') {
         filteredData = calculateListeningDuration(filteredData, entityType);
         filteredData.sort((a, b) => b.listeningDuration - a.listeningDuration);
+    } else if (sortingBasis === "first-n-scrobbles") {
+        filteredData = calculateFirstToXScrobbles(filteredData, xValue, entityType);
+        filteredData.sort((a, b) => a.timeNeeded - b.timeNeeded);   
+    } else if (sortingBasis === "fastest-n-scrobbles") {
+        filteredData = calculateFastestToXScrobbles(filteredData, xValue, entityType);
+        filteredData.sort((a, b) => a.timeNeeded - b.timeNeeded); 
     }
 
     if (entityType === "track") {
@@ -2051,6 +2260,51 @@ function applyFilters() {
     updateActiveFilters();
 }
 
+function displayAllScrobbles() {
+    const resultsDiv = document.getElementById("results");
+    const maxPerArtist = parseInt(document.getElementById("max-per-artist").value) || Infinity;
+    const listLength = parseInt(document.getElementById("list-length").value) || 10;
+    let tracks = filteredData
+    resultsDiv.innerHTML = "";
+
+    // Sort tracks chronologically (oldest to newest)
+    tracks.sort((a, b) => a.Date - b.Date);
+
+    // Object to track how many scrobbles per artist have been added
+    const artistCounts = {};
+
+    tracks.slice(0, listLength).forEach((track) => {
+        const artist = track.Artist;
+        if (!artistCounts[artist]) artistCounts[artist] = 0;
+
+        // Skip this track if the artist has already reached the max limit
+        if (artistCounts[artist] >= maxPerArtist) return;
+
+        artistCounts[artist]++; // Count this track for the artist
+
+        const trackDiv = document.createElement("div");
+        trackDiv.classList.add("track");
+
+        // Format Date to YYYY-MM-DD HH:MM
+        const date = new Date(Number(track.Date)); 
+        const formattedDate = date.getFullYear() + "-" + 
+            String(date.getMonth() + 1).padStart(2, "0") + "-" + 
+            String(date.getDate()).padStart(2, "0") + " " + 
+            String(date.getHours()).padStart(2, "0") + ":" + 
+            String(date.getMinutes()).padStart(2, "0");
+
+        trackDiv.innerHTML = `
+            <strong>${track.Track}</strong> by ${artist}
+            <br>Album: ${track.Album || "Unknown"}
+            <br>Scrobbled on: ${formattedDate}
+        `;
+
+        const resultsHeader = document.querySelector("#results-section h2");
+        resultsHeader.textContent = "Scrobbles";
+        resultsDiv.appendChild(trackDiv);
+    });
+}
+
 // Attach event listeners to filter inputs
 document.querySelectorAll(".filters").forEach(filter => {
     filter.addEventListener("input", (event) => {
@@ -2067,6 +2321,7 @@ function updateActiveFilters() {
 
         { id: "entity-type", label: "Entity type", isSelect: true },
         { id: "sorting-basis", label: "Sorting basis", isSelect: true },
+        { id: "x-value", label: "X" },
 
         { id: "max-per-artist", label: "Displayed tracks per artist" },
 
@@ -2088,6 +2343,9 @@ function updateActiveFilters() {
         { id: "artist-track-count-min", label: "Artist min track count" },
         { id: "artist-track-count-max", label: "Artist max track count" },
         { id: "artist-first-scrobble-years", label: "Artist first scrobble years" },
+        { id: "artist-days-since-last-min", label: "Min days since artist last scrobbled" },
+        { id: "artist-days-since-last-max", label: "Max days since artist last scrobbled" },
+
 
         { id: "artist-listeners-min", label: "Artist min listeners" },
         { id: "artist-listeners-max", label: "Artist max listeners" },
@@ -2113,6 +2371,8 @@ function updateActiveFilters() {
         { id: "album-track-count-min", label: "Album min tracks scrobbled" },
         { id: "album-track-count-max", label: "Album max tracks scrobbled" },
         { id: "album-first-scrobble-years", label: "Album first scrobble years" },
+        { id: "album-days-since-last-min", label: "Min days since album last scrobbled" },
+        { id: "album-days-since-last-max", label: "Max days since album last scrobbled" },
 
         { id: "album-listeners-min", label: "Album min listeners" },
         { id: "album-listeners-max", label: "Album max listeners" },
@@ -2136,6 +2396,8 @@ function updateActiveFilters() {
         { id: "track-rank-min", label: "Track min rank" },
         { id: "track-rank-max", label: "Track max rank" },
         { id: "track-first-scrobble-years", label: "Track first scrobble years" },
+        { id: "track-days-since-last-min", label: "Min days since track last scrobbled" },
+        { id: "track-days-since-last-max", label: "Max days since track last scrobbled" },
 
         { id: "track-listeners-min", label: "Track min listeners" },
         { id: "track-listeners-max", label: "Track max listeners" },
@@ -2152,7 +2414,7 @@ function updateActiveFilters() {
         { id: "weekday", label: "Weekday", isSelect: true },
         { id: "date-range-start", label: "Date range start" },
         { id: "date-range-end", label: "Date range end" },
-        { id: "last-n-days", label: "Last n days" },
+        { id: "last-n-days", label: "Last X days" },
         { id: "scrobble-order-from", label: "Scrobble order (min)" },
         { id: "scrobble-order-to", label: "Scrobble order (max)" }
     ];
@@ -2187,15 +2449,24 @@ function resetFilters() {
     document.getElementById("entity-type").value = "track";
     
     // Display the full track list and update active filters display
-    applyFilters();
+    filterTracks();
+    displayEntities();
     updateActiveFilters();
 }
 
 // Event listener for Apply Filters button
-document.getElementById("apply-filters").addEventListener("click", applyFilters);
+document.getElementById("apply-filters").addEventListener("click", () => {
+    filterTracks();
+    displayEntities(); // Displays tracks, albums, or artists based on sorting
+});
 
 // Event listener for Reset Filters button
 document.getElementById("reset-filters").addEventListener("click", resetFilters);
+
+document.getElementById("scrobble-list").addEventListener("click", () => {
+    filterTracks();
+    displayAllScrobbles(); // Displays all scrobbles in chronological order
+});
 
 document.querySelectorAll('.dropdown').forEach(dropdown => {
     dropdown.addEventListener('click', function(event) {
@@ -2212,6 +2483,15 @@ document.querySelectorAll('.dropdown').forEach(dropdown => {
         // Prevent the dropdown click from propagating and causing body scroll
         event.stopPropagation();
     });
+});
+
+document.getElementById("sorting-basis").addEventListener("change", function () {
+    const fastestNInput = document.getElementById("x-value");
+    if (this.value === "fastest-n-scrobbles" || this.value === "first-n-scrobbles") {
+        fastestNInput.style.display = "block";
+    } else {
+        fastestNInput.style.display = "none";
+    }
 });
 
 // Close dropdown when clicking outside
@@ -2247,3 +2527,10 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 });
 
+document.getElementById("filters-section-toggle").addEventListener("click", function () {
+    const sidebar = document.getElementById("filters-section");
+    sidebar.classList.toggle("closed");
+
+    // Change arrow direction
+    this.innerHTML = sidebar.classList.contains("closed") ? "&#9654;" : "&#9664;";
+});
