@@ -13,39 +13,49 @@
 </head>
 <body>
 	<header>
-		<h1>lastfmlists.com</h1>
+		<h1>lastfmlists</h1>
 		<p>Create various lists using your last.fm data!</p>
 	</header>
 	<main>
 
-		<section id="input-section">
-
-			<form id="username-form">
-				<input type="text" id="username" placeholder="Enter your Last.fm username" required>
-				<button type="submit">Load Data</button>
-                <button type="button" id="load-detailed-data" disabled title="Load your regular data and save it to your browser to unlock loading detailed data!">
-                    Load Details
-                  </button>
-                <button type="button" id="save-data">Save Data</button>
-                <button type="button" id="theme-toggle"><i class="fas fa-moon"></i></button>
-			</form>
-
-            <input type="file" id="csv-file" placeholder="Upload a csv file" accept=".csv">
-
-            <label for="load-all-data" class="inline-checkbox">
+        <section id="input-section">
+            <!-- Username input on its own line -->
+            <div class="username-container">
+              <form id="username-form">
+                <input type="text" id="username" placeholder="Enter your Last.fm username" required>
+              </form>
+            </div>
+          
+            <!-- Buttons in one centered row -->
+            <div class="buttons-container">
+              <button type="submit" form="username-form" id="load-data">Load Data</button>
+              <button type="button" id="load-detailed-data" disabled title="Load your regular data and save it to your browser to unlock loading detailed data!">
+                Load Details
+              </button>
+              <button type="button" id="save-data">Save Data</button>
+              <button type="button" id="theme-toggle"><i class="fas fa-moon"></i></button>
+            </div>
+          
+            <!-- CSV input and "Load ALL details" checkbox on the same line -->
+            <div class="csv-container">
+              <input type="file" id="csv-file" placeholder="Upload a csv file" accept=".csv">
+              <label for="load-all-data" class="inline-checkbox">
                 Load ALL details (may take a while):
                 <input type="checkbox" id="load-all-data">
-            </label>
-
-              <!-- This div will show loading messages for detailed stats -->
+              </label>
+            </div>
+          
+            <!-- Loading stats -->
             <div id="loading-stats" style="font-style: italic; color: #888;"></div>
-		</section>
+          </section>          
 
         <section id="filters-section">
-            <h3>Filters:</h3>
+            <h3>Filters</h3>
             <!-- List Length -->
-            <label for="list-length">List Length:</label>
-            <input type="number" id="list-length" placeholder="e.g., 10" min="1">
+            <div class="list-length-container">
+                <label for="list-length">List Length:</label>
+                <input type="number" id="list-length" placeholder="e.g., 10" min="1">
+            </div>
             <!-- Unfiltered stats in parentheses checkbox -->
             <label for="unfiltered-stats" class="inline-checkbox">
                 Show unfiltered stats in parentheses:
@@ -57,8 +67,7 @@
                     <button class="dropdown-button">Sorting Basis</button>
                     <div class="dropdown-content">
                         <select id="sorting-basis">
-                            <option value="scrobbles">Number of scrobbles</option>
-                            <option value="time-spent-listening">Time spent listening</option>
+                            <option value="scrobbles">Scrobble count</option>
                             <option value="separate-days">Scrobbled on different days</option>
                             <option value="separate-weeks">Scrobbled on different weeks</option>
                             <option value="separate-months">Scrobbled on different months</option>
@@ -66,8 +75,15 @@
                             <option value="consecutive-days">Max listening streak (days)</option>
                             <option value="consecutive-weeks">Max listening streak (weeks)</option>
                             <option value="consecutive-months">Max listening streak (months)</option>
+                            <option value="first-n-scrobbles">First to X scrobbles</option>
+                            <option value="fastest-n-scrobbles">Fastest to X scrobbles</option>
+                            <hr class="separator">
+                            <option value="time-spent-listening">Time spent listening</option>
                             <option value="highest-listening-percentage">Percentage of global scrobbles</option>
                         </select>
+
+                            <!-- Hidden input field for N -->
+                            <input type="number" id="x-value" placeholder="Enter X" min="1" style="display: none; margin-top: 8px;">
                     </div>
                 </div>
                 
@@ -145,6 +161,14 @@
                             <div class="input-pair">
                                 <input type="number" id="artist-track-count-min" placeholder="0" min="0">
                                 <input type="number" id="artist-track-count-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <label>Days since last scrobble (min - max)</label>
+                            <div class="input-pair">
+                                <input type="number" id="artist-days-since-last-min" placeholder="0" min="0">
+                                <input type="number" id="artist-days-since-last-max" placeholder="∞" min="0">
                             </div>
                         </div>
 
@@ -241,6 +265,14 @@
 
                         <label for="album-first-scrobble-years">Year of first scrobble:</label>
                         <input type="text" id="album-first-scrobble-years" placeholder="e.g., 2019, 2020">
+
+                        <div class="input-group">
+                            <label>Days since last scrobble (min - max)</label>
+                            <div class="input-pair">
+                                <input type="number" id="album-days-since-last-min" placeholder="0" min="0">
+                                <input type="number" id="album-days-since-last-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
                         
                         <hr class="separator">
                         
@@ -318,6 +350,14 @@
 
                         <label for="track-first-scrobble-years">Year of first scrobble:</label>
                         <input type="text" id="track-first-scrobble-years" placeholder="e.g., 2019, 2020">
+
+                        <div class="input-group">
+                            <label>Days since last scrobble (min - max)</label>
+                            <div class="input-pair">
+                                <input type="number" id="track-days-since-last-min" placeholder="0" min="0">
+                                <input type="number" id="track-days-since-last-max" placeholder="∞" min="0">
+                            </div>
+                        </div>
                         
                         <hr class="separator">
                         
@@ -354,7 +394,7 @@
                     <button class="dropdown-button">Time</button>
                     <div class="dropdown-content">
 
-                        <label for="last-n-days">Last n days:</label>
+                        <label for="last-n-days">Last X days:</label>
                         <input type="number" id="last-n-days" placeholder="e.g., last 30 days">
 
                         <label>Date range (start):</label>           
@@ -407,14 +447,18 @@
                 </div>
             </div>
 
-            <!-- Active Filters Section -->
-            <div id="active-filters" class="active-filters"></div>
-
             <div class="filter-buttons">
                 <button id="apply-filters">Apply Filters</button>
                 <button id="reset-filters">Reset Filters</button>
+                <button id="scrobble-list">Show All Scrobbles</button>
             </div>
-        </section>        
+        </section>
+        
+        <!-- Toggle Button (placed outside) -->
+        <button id="filters-section-toggle">&#9664;</button>
+
+        <!-- Active Filters Section -->
+        <div id="active-filters" class="active-filters"></div>
         
 		<section id="results-section">
 			<h2>Top Tracks</h2>
