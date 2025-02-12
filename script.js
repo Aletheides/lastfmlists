@@ -1360,7 +1360,7 @@ function getMatchingTrackTime(groupTracks, periodKey, period) {
 		let pKey;
 		switch (period) {
 			case 'day':
-				pKey = Math.floor(ts - timezoneOffsetMs / 86400000);
+				pKey = Math.floor((ts - timezoneOffsetMs) / 86400000);
 				break;
 			case 'week':
 				pKey = getWeekIdentifier(d);
@@ -1810,12 +1810,12 @@ function getAdditionalInfo(sortingBasis, entity) {
     } else if (sortingBasis === 'time-spent-listening') {
         return `Listening time: ${formatDuration(entity.listeningDuration)}`;
     } else if (sortingBasis === 'first-n-scrobbles') {;
-		const endDate = entity.dateReached ? new Date(parseInt(entity.dateReached)).toISOString().split('T')[0] : 'N/A';
-        return `Date reached: ${endDate}<br>Time to reach: ${formatDuration(entity.timeNeeded)}`
+		const startFirst = entity.dateReached ? new Date(parseInt(entity.dateReached)).toISOString().split('T')[0] : 'N/A';
+        return `Date reached: ${startFirst}<br>Time to reach: ${formatDuration(entity.timeNeeded)}`
     } else if (sortingBasis === 'fastest-n-scrobbles') {
-        const startDate = entity.firstScrobble ? new Date(parseInt(entity.firstScrobble)).toISOString().split('T')[0] : 'N/A';
-		const endDate = entity.dateReached ? new Date(parseInt(entity.dateReached)).toISOString().split('T')[0] : 'N/A';
-        return `Time to reach: ${formatDuration(entity.timeNeeded)}<br>First scrobble: ${startDate}<br>Date reached: ${endDate} `
+        const startFastest = entity.firstScrobble ? new Date(parseInt(entity.firstScrobble)).toISOString().split('T')[0] : 'N/A';
+		const endFastest = entity.dateReached ? new Date(parseInt(entity.dateReached)).toISOString().split('T')[0] : 'N/A';
+        return `Time to reach: ${formatDuration(entity.timeNeeded)}<br>First scrobble: ${startFastest}<br>Date reached: ${endFastest} `
     } else {
 		return `Scrobbles: ${entity.count}`;
 	}
